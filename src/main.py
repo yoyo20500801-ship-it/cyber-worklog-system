@@ -19,6 +19,14 @@ from src.ui import theme_registry
 from src.ui.views.main_window import MainWindow
 
 def main():
+    # 設定 AppUserModelID，讓 Windows 工作列正確顯示視窗圖示
+    # （否則 pythonw.exe 啟動時工作列會沿用 Python 圖示）
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CyberWorklogSystem.1")
+    except Exception:
+        pass
+
     # 確保資料庫已初始化（含舊版資料庫的 sort_order 欄位遷移）
     init_db()
 

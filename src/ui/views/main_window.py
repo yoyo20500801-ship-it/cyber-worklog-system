@@ -3,6 +3,8 @@ import customtkinter as ctk
 import threading
 import webbrowser
 from datetime import datetime
+from pathlib import Path
+import tkinter as tk
 from tkinter import messagebox, filedialog
 from src.ui.theme import Theme
 from src.ui import theme_registry
@@ -43,6 +45,22 @@ class MainWindow(ctk.CTk):
         self.title("工作日誌系統")
         self.geometry("1280x720") 
         self.configure(fg_color=Theme.BG_DARK)
+
+        # 設定視窗圖示（左上角 + 工作列）；缺檔或失敗時沿用預設，不影響啟動
+        _assets = Path(__file__).resolve().parent.parent.parent.parent / "assets"
+        _icon = _assets / "app.ico"
+        if _icon.exists():
+            try:
+                self.iconbitmap(str(_icon))
+            except Exception:
+                pass
+        _png = _assets / "app.png"
+        if _png.exists():
+            try:
+                self._app_icon_image = tk.PhotoImage(file=str(_png))
+                self.iconphoto(True, self._app_icon_image)
+            except Exception:
+                pass
 
         self.current_view_name = "dashboard"
         
