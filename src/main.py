@@ -1,9 +1,17 @@
 # 檔案：src/main.py
+import os
 import sys
 from pathlib import Path
 
 # 確保可從專案根目錄執行（python src\main.py）時能正確匯入 src 套件
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# 用 pythonw.exe 啟動時沒有主控台，stdout/stderr 為 None；
+# 若直接 print() 會崩潰，故先導向空裝置（GUI 程式不需主控台輸出）。
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 import customtkinter as ctk
 from src.db.connection import init_db

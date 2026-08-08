@@ -82,7 +82,11 @@ def main(job_path):
 
     log("更新完成，重新啟動程式")
     python = job.get("python") or sys.executable
-    subprocess.Popen([python, "src/main.py"], cwd=str(install))
+    subprocess.Popen(
+        [python, "src/main.py"],
+        cwd=str(install),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     return 0
 
 
