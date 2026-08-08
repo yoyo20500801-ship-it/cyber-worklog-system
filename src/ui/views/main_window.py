@@ -2,6 +2,7 @@
 import customtkinter as ctk
 import threading
 import webbrowser
+import calendar
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
@@ -11,6 +12,7 @@ from src.ui import theme_registry
 from src.core import updater
 from src.db.repository import Repository
 from src.core.excel_exporter import ExcelExporter # 引入匯出引擎
+from src.utils.date_helper import selectable_years, to_roc_date
 from src.ui.views.settings_view import SettingsView
 from src.ui.views.transfer_view import TransferSystemView
 from src.ui.views.db_search_view import DatabaseSearchView
@@ -177,6 +179,13 @@ class MainWindow(ctk.CTk):
             "dbsearch": (self.view_dbs, self.btn_dbs),
         }
         view, active_btn = mapping[view_name]
+        reset_view = {
+            "overview": self.view_overview,
+            "dashboard": self.view_dashboard,
+            "transfer": self.view_transfer,
+        }.get(view_name)
+        if reset_view is not None and hasattr(reset_view, "reset_to_now"):
+            reset_view.reset_to_now()
         view.tkraise()  # 將指定頁面置頂
         for btn in (self.btn_overview, self.btn_dashboard, self.btn_settings, self.btn_transfer, self.btn_dbs):
             if btn is active_btn:
@@ -391,8 +400,26 @@ class WorklogView(ctk.CTkFrame):
         form_frame = ctk.CTkFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
         form_frame.grid(row=0, column=0, sticky="ew", pady=(0, 20), ipadx=10, ipady=10)
         
-        title = ctk.CTkLabel(form_frame, text="工作日誌", font=Theme.FONT_HEADING, text_color=Theme.NEON_CYAN)
-        title.grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 15), sticky="w")
+        topbar = ctk.CTkFrame(form_frame, fg_color="transparent")
+        topbar.grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 15), sticky="ew")
+
+        ctk.CTkLabel(topbar, text="工作日誌", font=Theme.FONT_HEADING, text_color=Theme.NEON_CYAN).pack(side="left")
+
+        self.date_var = ctk.StringVar(value=str(datetime.now().date()))
+        self.top_combo_year = ctk.CTkComboBox(
+            topbar, values=selectable_years(Repository.get_min_worklog_year()),
+            variable=self.filter_year_var, width=80, command=self._on_year_month_change
+        )
+        self.top_combo_year.pack(side="left", padx=(25, 5))
+        self.top_combo_month = ctk.CTkComboBox(
+            topbar, values=[str(m).zfill(2) for m in range(1, 13)],
+            variable=self.filter_month_var, width=60, command=self._on_year_month_change
+        )
+        self.top_combo_month.pack(side="left", padx=5)
+
+        ctk.CTkLabel(topbar, text="日期", font=Theme.FONT_BODY, text_color=Theme.TEXT_MUTED).pack(side="left", padx=(20, 5))
+        self.date_entry = ctk.CTkEntry(topbar, textvariable=self.date_var, width=120)
+        self.date_entry.pack(side="left")
         
         self.project_var = ctk.StringVar(value="【請設定專案資料】")
         self.project_combo = ctk.CTkComboBox(form_frame, variable=self.project_var, values=["【請設定專案資料】"], width=160)
@@ -467,12 +494,12 @@ class WorklogView(ctk.CTkFrame):
         title = ctk.CTkLabel(header, text="歷史紀錄", font=Theme.FONT_HEADING, text_color=Theme.NEON_CYAN)
         title.pack(side="left")
 
-        years = [str(y) for y in range(2023, 2031)]
+        years = selectable_years(Repository.get_min_worklog_year())
         months = [str(m).zfill(2) for m in range(1, 13)]
         
-        self.combo_year = ctk.CTkComboBox(header, values=years, variable=self.filter_year_var, width=80, command=lambda _: self.refresh_list())
+        self.combo_year = ctk.CTkComboBox(header, values=years, variable=self.filter_year_var, width=80, command=self._on_year_month_change)
         self.combo_year.pack(side="left", padx=(20, 5))
-        self.combo_month = ctk.CTkComboBox(header, values=months, variable=self.filter_month_var, width=60, command=lambda _: self.refresh_list())
+        self.combo_month = ctk.CTkComboBox(header, values=months, variable=self.filter_month_var, width=60, command=self._on_year_month_change)
         self.combo_month.pack(side="left", padx=5)
 
         self.seg_history_status = ctk.CTkSegmentedButton(
@@ -528,13 +555,13 @@ class WorklogView(ctk.CTkFrame):
                 row = [
                     idx,                                  
                     weekday_map[dt.weekday()],            
-                    log['work_date'],                     
+                    to_roc_date(log['work_date']),        
                     w_time,                               
                     log.get('project_name', ''),          
                     log.get('school_name', ''),           
                     log['issue_content'],                 
                     log.get('solution', ''),              
-                    log.get('finish_date', ''),           
+                    to_roc_date(log.get('finish_date', '')), 
                     f_time,                               
                     log.get('issue_code', '')             
                 ]
@@ -558,12 +585,73 @@ class WorklogView(ctk.CTkFrame):
             return
 
         project_id = next((p['id'] for p in self.projects_data if p['name'] == proj_name), None)
+        school_name = self.school_var.get()
+
+        if project_id is None and not self._is_placeholder(proj_name):
+            if messagebox.askyesno("建立專案", f"「{proj_name}」尚未建立，是否立即建立此專案？"):
+                try:
+                    project_id = Repository.add_project(proj_name)
+                    self.load_projects_from_db()
+                    self.project_var.set(proj_name)
+                    self.on_project_select(proj_name)
+                    self.school_var.set(school_name)
+                except Exception as e:
+                    messagebox.showerror("錯誤", f"建立專案失敗：\n{str(e)}")
+                    return
+            else:
+                return
+
         schools = Repository.get_schools_by_project(project_id) if project_id else []
-        school_id = next((s['id'] for s in schools if s['school_name'] == self.school_var.get()), None)
+        school_id = next((s['id'] for s in schools if s['school_name'] == school_name), None)
+
+        if school_id is None and not self._is_placeholder(school_name):
+            if messagebox.askyesno("建立學校", f"「{school_name}」尚未建立，是否立即建立並加入專案「{proj_name}」？"):
+                try:
+                    school_id = Repository.add_school(school_name)
+                    Repository.attach_school_to_project(project_id, school_id)
+                    if school_name not in self.all_school_names:
+                        self.all_school_names.append(school_name)
+                        self.school_combo.configure(values=self.all_school_names)
+                    self.school_var.set(school_name)
+                except Exception as e:
+                    messagebox.showerror("錯誤", f"建立學校失敗：\n{str(e)}")
+                    return
+            else:
+                return
 
         now = datetime.now()
         s_dt = self.start_datetime if self.start_datetime else now
-        
+
+        date_str = self.date_var.get().strip()
+        parsed_date = None
+        if date_str:
+            try:
+                parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                messagebox.showwarning("警告", "日期格式錯誤，應為 YYYY-MM-DD（例如 2026-07-10）。")
+                return
+
+        if self.editing_log_id:
+            if parsed_date is not None:
+                s_dt = datetime.combine(parsed_date, s_dt.time())
+        else:
+            if parsed_date is not None:
+                s_dt = datetime.combine(parsed_date, s_dt.time())
+            else:
+                try:
+                    sel_y = int(self.filter_year_var.get())
+                    sel_m = int(self.filter_month_var.get())
+                except (TypeError, ValueError):
+                    sel_y, sel_m = now.year, now.month
+                last_day = calendar.monthrange(sel_y, sel_m)[1]
+                s_dt = s_dt.replace(year=sel_y, month=sel_m, day=min(s_dt.day, last_day))
+
+        if self.current_status == "已處理":
+            if not (self.editing_log_id and self.finish_datetime):
+                self.finish_datetime = datetime.now()
+        else:
+            self.finish_datetime = None
+
         transfer_target = self.personnel_var.get() if self.current_status == "轉交" and not self._is_placeholder(self.personnel_var.get()) else None
 
         data = {
@@ -595,6 +683,7 @@ class WorklogView(ctk.CTkFrame):
     def clear_form(self):
         self.editing_log_id = None
         self.btn_clear.configure(text="清空")
+        self.date_var.set(self._default_date_for_selection())
         self.phone_entry.clear_text()
         self.contact_entry.clear_text()
         self.pii_entry.clear_text()
@@ -645,6 +734,7 @@ class WorklogView(ctk.CTkFrame):
     def enter_edit_mode(self, log):
         self.editing_log_id = log['id']
         self.btn_clear.configure(text="取消")
+        self.date_var.set(log.get('work_date') or self._default_date_for_selection())
         self.project_var.set(log.get('project_name') or "【請設定專案資料】")
         self.on_project_select(self.project_var.get())
         self.school_var.set(log.get('school_name') or "【請設定學校】")
@@ -665,6 +755,33 @@ class WorklogView(ctk.CTkFrame):
         if log.get('status') == '轉交':
             self.personnel_var.set(log.get('transfer_to'))
             self.personnel_combo.configure(text_color=Theme.TEXT_MAIN)
+
+    def _default_date_for_selection(self):
+        now = datetime.now()
+        try:
+            y = int(self.filter_year_var.get())
+            m = int(self.filter_month_var.get())
+        except (TypeError, ValueError):
+            y, m = now.year, now.month
+        day = min(now.day, calendar.monthrange(y, m)[1])
+        return f"{y:04d}-{m:02d}-{day:02d}"
+
+    def _on_year_month_change(self, _=None):
+        self.date_var.set(self._default_date_for_selection())
+        self.refresh_list()
+
+    def _refresh_year_options(self):
+        years = selectable_years(Repository.get_min_worklog_year())
+        self.top_combo_year.configure(values=years)
+        self.combo_year.configure(values=years)
+
+    def reset_to_now(self):
+        now = datetime.now()
+        self._refresh_year_options()
+        self.filter_year_var.set(str(now.year))
+        self.filter_month_var.set(str(now.month).zfill(2))
+        self.date_var.set(str(now.date()))
+        self.refresh_list()
 
     def refresh_list(self):
         for widget in self.scroll_frame.winfo_children():
@@ -756,8 +873,24 @@ class WorklogView(ctk.CTkFrame):
             make_clickable(card)
 
     def open_browser_and_start(self):
-        target_url = "https://www.google.com" 
-        webbrowser.open(target_url)
+        # 開啟目前選中專案設定的網址；未選專案或沒設網址時提示
+        proj_name = self.project_var.get()
+        target_url = None
+        if self.projects_data:
+            proj = next((p for p in self.projects_data if p['name'] == proj_name), None)
+            if proj:
+                target_url = (proj.get('url') or '').strip()
+
+        if self._is_placeholder(proj_name):
+            messagebox.showwarning("未選擇專案", "請先在專案欄位選擇要導向的專案。")
+        elif not target_url:
+            messagebox.showwarning("未設定網址", f"專案「{proj_name}」尚未設定網址。\n請到「系統設定 → 專案管理」為它填上專案網址。")
+        else:
+            if not target_url.startswith(("http://", "https://")):
+                target_url = "https://" + target_url
+            webbrowser.open(target_url)
+
+        # 記錄開始/完成時間
         self.start_datetime = datetime.now()
         if self.current_status == "已處理":
             self.finish_datetime = datetime.now()

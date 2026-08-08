@@ -245,6 +245,15 @@ class Repository:
             conn.execute(f"DELETE FROM worklogs WHERE id IN ({placeholders})", tuple(log_ids))
 
     @staticmethod
+    def get_min_worklog_year():
+        """回傳資料庫最早的 work_date 年份；無任何紀錄時回傳 None。"""
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT MIN(substr(work_date, 1, 4)) FROM worklogs")
+            raw = cursor.fetchone()[0]
+        return int(raw) if raw else None
+
+    @staticmethod
     def get_worklogs_by_month(year: str, month: str, status: str = None) -> list:
         like_pattern = f"{year}-{month.zfill(2)}-%"
         params = [like_pattern]

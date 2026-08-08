@@ -3,6 +3,7 @@ import customtkinter as ctk
 from datetime import datetime
 from src.ui.theme import Theme
 from src.db.repository import Repository
+from src.utils.date_helper import selectable_years
 
 STATUS_ORDER = ("已處理", "待處理", "轉交")
 STATUS_COLORS = {"已處理": Theme.NEON_GREEN, "待處理": Theme.STATUS_PENDING, "轉交": Theme.STATUS_TRANSFER}
@@ -40,7 +41,7 @@ class OverviewView(ctk.CTkFrame):
             font=Theme.FONT_HEADING, text_color=Theme.NEON_CYAN
         ).pack(side="left", padx=15, pady=10)
 
-        years = [str(y) for y in range(2023, 2031)]
+        years = selectable_years(Repository.get_min_worklog_year())
         months = [str(m).zfill(2) for m in range(1, 13)]
 
         self.combo_year = ctk.CTkComboBox(
@@ -139,6 +140,13 @@ class OverviewView(ctk.CTkFrame):
     # ==========================================
     # 刷新
     # ==========================================
+    def reset_to_now(self):
+        now = datetime.now()
+        self.combo_year.configure(values=selectable_years(Repository.get_min_worklog_year()))
+        self.year_var.set(str(now.year))
+        self.month_var.set(str(now.month).zfill(2))
+        self.refresh_all()
+
     def refresh_all(self):
         self.refresh_summary()
         self._refresh_records()

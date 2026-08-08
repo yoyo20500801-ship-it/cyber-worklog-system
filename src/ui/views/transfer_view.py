@@ -4,6 +4,7 @@ from datetime import datetime
 from tkinter import messagebox
 from src.ui.theme import Theme
 from src.db.repository import Repository
+from src.utils.date_helper import selectable_years
 
 
 class TransferSystemView(ctk.CTkFrame):
@@ -32,7 +33,7 @@ class TransferSystemView(ctk.CTkFrame):
             font=Theme.FONT_HEADING, text_color=Theme.NEON_CYAN
         ).pack(side="left", padx=15, pady=10)
 
-        years = [str(y) for y in range(2023, 2031)]
+        years = selectable_years(Repository.get_min_worklog_year())
         months = [str(m).zfill(2) for m in range(1, 13)]
 
         self.combo_year = ctk.CTkComboBox(
@@ -62,6 +63,13 @@ class TransferSystemView(ctk.CTkFrame):
     def _build_list(self):
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.scroll.grid(row=1, column=0, sticky="nsew")
+
+    def reset_to_now(self):
+        now = datetime.now()
+        self.combo_year.configure(values=selectable_years(Repository.get_min_worklog_year()))
+        self.year_var.set(str(now.year))
+        self.month_var.set(str(now.month).zfill(2))
+        self.refresh_list()
 
     def refresh_list(self):
         for w in self.scroll.winfo_children():
