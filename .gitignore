@@ -1,0 +1,25 @@
+# 虛擬環境
+venv/
+__pycache__/
+*.pyc
+
+# 本機資料庫與設定
+*.db
+*.sqlite3
+
+# 每台機器的使用者資料（不進 repo，避免更新時互相覆蓋）
+config/
+
+# 更新暫存與發布檔
+temp/
+release/
+
+# 測試快取
+.pytest_cache/
+
+# Excel 輸出檔案 (但不排除 templates 裡的空範本)
+*.xlsx
+!templates/worklog_template.xlsx
+
+# VS Code 設定
+.vscode/
