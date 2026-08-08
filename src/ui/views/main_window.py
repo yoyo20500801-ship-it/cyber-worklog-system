@@ -17,6 +17,7 @@ from src.ui.views.settings_view import SettingsView
 from src.ui.views.transfer_view import TransferSystemView
 from src.ui.views.db_search_view import DatabaseSearchView
 from src.ui.views.overview_view import OverviewView
+from src.ui.views.mail_view import MailView
 from src.ui.views.theme_picker import ThemePickerDialog
 
 
@@ -77,12 +78,14 @@ class MainWindow(ctk.CTk):
 
         # 延遲一點點，等介面出現後再背景檢查更新（連線失敗時靜默略過）
         self.after(1200, self._start_background_update_check)
+        # 啟動時背景同步客戶來信（已設定帳號且開啟自動同步時）
+        self.after(1800, self._start_background_mail_sync)
 
     def _build_sidebar(self):
         """建構左側導覽列"""
         self.sidebar_frame = ctk.CTkFrame(self, fg_color=Theme.BG_CARD, corner_radius=0, width=250)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(6, weight=1) 
+        self.sidebar_frame.grid_rowconfigure(7, weight=1) 
 
         self.logo_label = ctk.CTkLabel(
             self.sidebar_frame, 
@@ -108,29 +111,37 @@ class MainWindow(ctk.CTk):
         )
         self.btn_dashboard.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
-        # 導覽按鈕 3：系統設定
+        # 導覽按鈕 3：客戶來信
+        self.btn_mail = ctk.CTkButton(
+            self.sidebar_frame, text="📩客戶來信", font=Theme.FONT_BODY,
+            fg_color="transparent", text_color=Theme.TEXT_MUTED, hover_color=Theme.BG_DARK,
+            command=lambda: self.show_view("mail")
+        )
+        self.btn_mail.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+
+        # 導覽按鈕 4：系統設定
         self.btn_settings = ctk.CTkButton(
             self.sidebar_frame, text="⚙️系統設定", font=Theme.FONT_BODY,
             fg_color="transparent", text_color=Theme.TEXT_MUTED, hover_color=Theme.BG_DARK,
             command=lambda: self.show_view("settings")
         )
-        self.btn_settings.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+        self.btn_settings.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
-        # 導覽按鈕 4：轉交系統
+        # 導覽按鈕 5：轉交系統
         self.btn_transfer = ctk.CTkButton(
             self.sidebar_frame, text="📚 轉交系統", font=Theme.FONT_BODY,
             fg_color="transparent", text_color=Theme.TEXT_MUTED, hover_color=Theme.BG_DARK,
             command=lambda: self.show_view("transfer")
         )
-        self.btn_transfer.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
+        self.btn_transfer.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
 
-        # 導覽按鈕 5：資料庫搜尋
+        # 導覽按鈕 6：資料庫搜尋
         self.btn_dbs = ctk.CTkButton(
             self.sidebar_frame, text="🔍 資料庫搜尋", font=Theme.FONT_BODY,
             fg_color="transparent", text_color=Theme.TEXT_MUTED, hover_color=Theme.BG_DARK,
             command=lambda: self.show_view("dbsearch")
         )
-        self.btn_dbs.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
+        self.btn_dbs.grid(row=6, column=0, padx=20, pady=10, sticky="ew")
 
         theme_label = theme_registry.active_theme().get("label", "主題")
         self.btn_theme = ctk.CTkButton(
@@ -138,12 +149,12 @@ class MainWindow(ctk.CTk):
             fg_color="transparent", text_color=Theme.TEXT_MUTED, hover_color=Theme.BG_DARK,
             command=self.open_theme_picker
         )
-        self.btn_theme.grid(row=7, column=0, padx=20, pady=10, sticky="ew")
+        self.btn_theme.grid(row=8, column=0, padx=20, pady=10, sticky="ew")
 
-        # === 底部：主題功能（row 6 為彈性空白，下列會被推到底部） ===
+        # === 底部：主題功能（row 7 為彈性空白，下列會被推到底部） ===
         self.mascot_label = _safe_image_label(self.sidebar_frame, "mascot", (225, 300))
         if self.mascot_label is not None:
-            self.mascot_label.grid(row=8, column=0, pady=(0, 5), sticky="s")
+            self.mascot_label.grid(row=9, column=0, pady=(0, 5), sticky="s")
 
         
 
@@ -158,6 +169,7 @@ class MainWindow(ctk.CTk):
         # 實例化所有視圖
         self.view_overview = OverviewView(self.main_frame)
         self.view_dashboard = WorklogView(self.main_frame)
+        self.view_mail = MailView(self.main_frame)
         self.view_settings = SettingsView(
             self.main_frame, 
             on_data_changed_callback=self.view_dashboard.load_projects_from_db # 設定更動時，自動重載 Dashboard 下拉選單
@@ -165,7 +177,7 @@ class MainWindow(ctk.CTk):
         self.view_transfer = TransferSystemView(self.main_frame)
         self.view_dbs = DatabaseSearchView(self.main_frame)
 
-        for view in (self.view_overview, self.view_dashboard, self.view_settings, self.view_transfer, self.view_dbs):
+        for view in (self.view_overview, self.view_dashboard, self.view_mail, self.view_settings, self.view_transfer, self.view_dbs):
             view.grid(row=0, column=0, sticky="nsew")
 
     def show_view(self, view_name):
@@ -174,11 +186,14 @@ class MainWindow(ctk.CTk):
         mapping = {
             "overview": (self.view_overview, self.btn_overview),
             "dashboard": (self.view_dashboard, self.btn_dashboard),
+            "mail": (self.view_mail, self.btn_mail),
             "settings": (self.view_settings, self.btn_settings),
             "transfer": (self.view_transfer, self.btn_transfer),
             "dbsearch": (self.view_dbs, self.btn_dbs),
         }
         view, active_btn = mapping[view_name]
+        if view_name == "settings":
+            self.view_settings.refresh_mail_blocklist()
         reset_view = {
             "overview": self.view_overview,
             "dashboard": self.view_dashboard,
@@ -187,7 +202,7 @@ class MainWindow(ctk.CTk):
         if reset_view is not None and hasattr(reset_view, "reset_to_now"):
             reset_view.reset_to_now()
         view.tkraise()  # 將指定頁面置頂
-        for btn in (self.btn_overview, self.btn_dashboard, self.btn_settings, self.btn_transfer, self.btn_dbs):
+        for btn in (self.btn_overview, self.btn_dashboard, self.btn_mail, self.btn_settings, self.btn_transfer, self.btn_dbs):
             if btn is active_btn:
                 btn.configure(border_width=1, border_color=Theme.NEON_CYAN, text_color=Theme.TEXT_MAIN)
             else:
@@ -224,6 +239,20 @@ class MainWindow(ctk.CTk):
         def work():
             result = updater.check_for_update()
             self.after(0, lambda: self._handle_update_result(result, startup=True))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _start_background_mail_sync(self):
+        """啟動時若已設定信箱帳號且開啟自動同步，背景抓取客戶來信。"""
+        from src.core import mail_config, mail_service
+
+        cfg = mail_config.load_config()
+        if not cfg.get("auto_sync") or not mail_config.is_configured(cfg):
+            return
+
+        def work():
+            mail_service.fetch_new(cfg)
+            self.after(0, self.view_mail.refresh_list)
 
         threading.Thread(target=work, daemon=True).start()
 

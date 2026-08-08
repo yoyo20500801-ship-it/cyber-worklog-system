@@ -16,6 +16,7 @@ if sys.stderr is None:
 import customtkinter as ctk
 from src.db.connection import init_db
 from src.ui import theme_registry
+from src.core import scroll_speed
 from src.ui.views.main_window import MainWindow
 
 def main():
@@ -35,6 +36,9 @@ def main():
 
     # 依目前主題設定 customtkinter 全域外觀（影響下拉選單、捲軸等元件）
     ctk.set_appearance_mode(theme_registry.get_theme_mode())
+
+    # 加快捲動：覆寫 CTkScrollableFrame._mouse_wheel_all（在任何實例建立前套用）
+    scroll_speed.apply()
 
     # 實例化主視窗並啟動事件迴圈
     app = MainWindow()

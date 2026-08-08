@@ -358,6 +358,154 @@ class Repository:
             )
 
     # ===============================
+    # 客戶來信 (Emails) 操作
+    # ===============================
+    @staticmethod
+    def upsert_email(data: dict) -> int:
+        """依 message_uid 新增或更新信件，回傳 email id。"""
+        uid = data.get("message_uid")
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            existing = cursor.execute(
+                "SELECT id FROM emails WHERE message_uid = ?", (uid,)
+            ).fetchone()
+            if existing:
+                sets = {k: v for k, v in data.items() if k != "message_uid"}
+                if sets:
+                    set_clause = ", ".join(f"{k} = ?" for k in sets)
+                    values = tuple(sets.values()) + (existing["id"],)
+                    cursor.execute(f"UPDATE emails SET {set_clause} WHERE id = ?", values)
+                return existing["id"]
+            columns = ", ".join(data.keys())
+            placeholders = ", ".join(["?"] * len(data))
+            cursor.execute(
+                f"INSERT INTO emails ({columns}) VALUES ({placeholders})",
+                tuple(data.values()),
+            )
+            return cursor.lastrowid
+
+    @staticmethod
+    def mark_thread_internal_reply(thread_keys: list):
+        """將指定執行緒的客戶信件標記為「同事已回覆」"""
+        if not thread_keys:
+            return
+        placeholders = ",".join(["?"] * len(thread_keys))
+        with DBConnection() as conn:
+            conn.execute(
+                f"UPDATE emails SET is_internal_reply = 1 WHERE thread_key IN ({placeholders})",
+                tuple(thread_keys),
+            )
+
+    @staticmethod
+    def mark_email_replied(email_id: int, replied_at: str):
+        with DBConnection() as conn:
+            conn.execute(
+                "UPDATE emails SET replied = 1, replied_at = ? WHERE id = ?",
+                (replied_at, email_id),
+            )
+
+    @staticmethod
+    def set_email_worklog(email_id: int, worklog_id: int):
+        with DBConnection() as conn:
+            conn.execute(
+                "UPDATE emails SET worklog_id = ? WHERE id = ?", (worklog_id, email_id)
+            )
+
+    @staticmethod
+    def get_emails(search: str = None, filter_mode: str = "全部", limit: int = 500) -> list:
+        """取得客戶來信清單。
+
+        filter_mode：全部 / 待處理 / 已回覆 / 同事已回覆 / 已轉工作日誌
+        """
+        params = []
+        where = ["1=1"]
+        if search:
+            kw = f"%{search}%"
+            where.append(
+                "(sender_name LIKE ? OR sender_email LIKE ? OR subject LIKE ? OR body LIKE ?)"
+            )
+            params += [kw, kw, kw, kw]
+        if filter_mode == "待處理":
+            where.append("replied = 0 AND worklog_id IS NULL")
+        elif filter_mode == "已回覆":
+            where.append("replied = 1")
+        elif filter_mode == "同事已回覆":
+            where.append("is_internal_reply = 1")
+        elif filter_mode == "已轉工作日誌":
+            where.append("worklog_id IS NOT NULL")
+        where_sql = " AND ".join(where)
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            query = f"""
+                SELECT e.*, w.issue_content AS worklog_issue
+                FROM emails e
+                LEFT JOIN worklogs w ON w.id = e.worklog_id
+                WHERE {where_sql}
+                ORDER BY e.received_at DESC, e.id DESC
+                LIMIT ?
+            """
+            cursor.execute(query, params + [limit])
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_email_by_id(email_id: int):
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            row = cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_email_count() -> int:
+        with DBConnection() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM emails").fetchone()
+            return row["c"] if row else 0
+
+    @staticmethod
+    def get_existing_email_uids() -> set:
+        with DBConnection() as conn:
+            rows = conn.execute("SELECT message_uid FROM emails").fetchall()
+            return {r["message_uid"] for r in rows}
+
+    # ---- 過濾名單 (blocklist) ----
+    @staticmethod
+    def add_email_blocklist(sender_email: str, sender_name: str = None) -> bool:
+        """把寄件人加入過濾名單，回傳是否為「新增」（重複加入回傳 False）。"""
+        if not sender_email:
+            return False
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR IGNORE INTO email_blocklist (sender_email, sender_name, blocked_at) "
+                "VALUES (?, ?, datetime('now', 'localtime'))",
+                (sender_email.strip(), (sender_name or "").strip() or None),
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def remove_email_blocklist(sender_email: str):
+        """從過濾名單復原寄件人（下次同步會重新抓取）。"""
+        with DBConnection() as conn:
+            conn.execute("DELETE FROM email_blocklist WHERE sender_email = ?", (sender_email,))
+
+    @staticmethod
+    def get_email_blocklist() -> list:
+        """取得全部過濾名單（由新到舊）。"""
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                "SELECT id, sender_email, sender_name, blocked_at FROM email_blocklist ORDER BY id DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def delete_emails_by_sender(sender_email: str) -> int:
+        """清除指定寄件人的所有來信，回傳刪除筆數。"""
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM emails WHERE sender_email = ?", (sender_email,))
+            return cursor.rowcount
+
+    # ===============================
     # 資料庫搜尋 (SQL) 操作
     # ===============================
     @staticmethod

@@ -5,6 +5,7 @@ from datetime import datetime
 from tkinter import messagebox
 from src.ui.theme import Theme
 from src.core import updater
+from src.core import mail_config, mail_service
 from src.db.repository import Repository
 
 class SettingsView(ctk.CTkFrame):
@@ -27,11 +28,13 @@ class SettingsView(ctk.CTkFrame):
         self.tab_projects = self.tabview.add("專案管理")
         self.tab_schools = self.tabview.add("學校管理")
         self.tab_contacts = self.tabview.add("人員管理")
+        self.tab_mail = self.tabview.add("信件設定")
         self.tab_sync = self.tabview.add("資料同步")
 
         self._build_projects_tab()
         self._build_schools_tab()
         self._build_contacts_tab()
+        self._build_mail_tab()
         self._build_sync_tab()
 
     # ==========================================
@@ -538,7 +541,233 @@ class SettingsView(ctk.CTkFrame):
             if self.on_data_changed_callback: self.on_data_changed_callback()
 
     # ==========================================
-    # 4. 資料同步 Tab
+    # 4. 信件設定 Tab
+    # ==========================================
+    def _build_mail_tab(self):
+        cfg = mail_config.load_config()
+
+        # 左右兩欄：左＝帳號設定，右＝過濾名單
+        container = ctk.CTkFrame(self.tab_mail, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=10, pady=10)
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(container, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        left.grid_columnconfigure(0, weight=1)
+
+        right = ctk.CTkFrame(container, fg_color=Theme.BG_DARK, width=320)
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        right.grid_propagate(False)
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            right, text="🚫 過濾名單", font=Theme.FONT_BODY, text_color=Theme.NEON_PINK
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+        ctk.CTkLabel(
+            right,
+            text="被過濾的寄件人：同步時不再抓取。\n按「復原」後，下次同步會重新抓取\n該寄件人的來信。",
+            text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, justify="left", anchor="w"
+        ).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
+
+        self.scroll_blocklist = ctk.CTkScrollableFrame(right, fg_color="transparent")
+        self.scroll_blocklist.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.scroll_blocklist.grid_columnconfigure(0, weight=1)
+
+        self.refresh_mail_blocklist()
+
+        form = ctk.CTkFrame(left, fg_color=Theme.BG_DARK)
+        form.pack(fill="x", pady=(0, 10))
+
+        ctk.CTkLabel(
+            form, text="客戶來信（Gmail）設定", font=Theme.FONT_BODY, text_color=Theme.NEON_CYAN
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(
+            form,
+            text="每位使用者可設定自己的 Google 帳號，密碼僅存在本機 config/。",
+            text_color=Theme.TEXT_MUTED, anchor="w", justify="left", font=Theme.FONT_SMALL
+        ).pack(anchor="w", padx=10, pady=(0, 8))
+
+        grid = ctk.CTkFrame(form, fg_color="transparent")
+        grid.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.entry_mail_email = ctk.CTkEntry(grid, placeholder_text="Gmail 帳號（例如 user@oneplus.com.tw）", width=360)
+        self.entry_mail_email.insert(0, cfg.get("email", ""))
+        self.entry_mail_email.grid(row=0, column=0, columnspan=3, sticky="w", padx=(0, 10), pady=5)
+
+        self.show_pw_var = ctk.BooleanVar(value=False)
+        self.entry_mail_password = ctk.CTkEntry(grid, placeholder_text="應用程式密碼（16 碼）", width=360, show="*")
+        self.entry_mail_password.insert(0, cfg.get("app_password", ""))
+        self.entry_mail_password.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
+
+        def toggle_show():
+            self.entry_mail_password.configure(show="" if self.show_pw_var.get() else "*")
+
+        ctk.CTkCheckBox(
+            grid, text="顯示", variable=self.show_pw_var, command=toggle_show,
+            checkbox_width=18, checkbox_height=18, font=Theme.FONT_SMALL
+        ).grid(row=1, column=1, sticky="w", pady=5)
+
+        opt_row = ctk.CTkFrame(form, fg_color="transparent")
+        opt_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(opt_row, text="抓取天數:", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL).pack(side="left")
+        self.entry_mail_days = ctk.CTkEntry(opt_row, width=70, font=Theme.FONT_SMALL)
+        self.entry_mail_days.insert(0, str(cfg.get("fetch_days", 30)))
+        self.entry_mail_days.pack(side="left", padx=(5, 15))
+
+        ctk.CTkLabel(opt_row, text="最多抓取:", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL).pack(side="left")
+        self.entry_mail_limit = ctk.CTkEntry(opt_row, width=70, font=Theme.FONT_SMALL)
+        self.entry_mail_limit.insert(0, str(cfg.get("fetch_limit", 300)))
+        self.entry_mail_limit.pack(side="left", padx=(5, 15))
+
+        self.auto_sync_var = ctk.BooleanVar(value=bool(cfg.get("auto_sync", True)))
+        ctk.CTkCheckBox(
+            opt_row, text="啟動時背景自動同步", variable=self.auto_sync_var,
+            checkbox_width=18, checkbox_height=18, font=Theme.FONT_SMALL
+        ).pack(side="left", padx=(10, 0))
+
+        btn_row = ctk.CTkFrame(form, fg_color="transparent")
+        btn_row.pack(fill="x", padx=10, pady=(0, 12))
+
+        self.btn_mail_save = ctk.CTkButton(
+            btn_row, text="💾 儲存設定", fg_color=Theme.NEON_GREEN, text_color=Theme.ON_ACCENT,
+            width=130, command=self._save_mail_config
+        )
+        self.btn_mail_save.pack(side="left", padx=(0, 10))
+
+        self.btn_mail_test = ctk.CTkButton(
+            btn_row, text="🔌 測試連線", fg_color=Theme.NEON_CYAN, text_color=Theme.ON_ACCENT,
+            width=130, command=self._test_mail_connection
+        )
+        self.btn_mail_test.pack(side="left", padx=10)
+
+        self.mail_status_label = ctk.CTkLabel(
+            btn_row, text="", text_color=Theme.NEON_GREEN, anchor="w", font=Theme.FONT_SMALL
+        )
+        self.mail_status_label.pack(side="left", padx=(15, 0))
+
+        # App Password 教學
+        guide = ctk.CTkFrame(left, fg_color=Theme.BG_DARK)
+        guide.pack(fill="x")
+
+        ctk.CTkLabel(
+            guide, text="📘 如何產生「應用程式密碼」？", font=Theme.FONT_BODY, text_color=Theme.NEON_CYAN
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(
+            guide,
+            text=(
+                "Google 基於安全考量，不允許用一般密碼登入郵件程式，必須使用「應用程式密碼」：\n"
+                "上方欄位請輸入信箱帳號，下方欄位請輸入16個字元的密碼\n\n"
+                "1. 先確認已開啟「兩步驟驗證」：登入Google➡️點選頭像➡️【更多設定】\n"
+                "2. 進入設定畫面：【隱私權與安全性】➡️【Google帳戶設定】\n"
+                "3. 進入Google帳戶畫面：【安全性與登入】➡️開啟【兩步驟驗證】➡️建立【應用程式密碼】\n"
+                "4. Google 會顯示 16 個字元的密碼（例如 abcd efgh ijkl mnop），整組貼到上方欄位\n\n"
+                "密碼只存在本機 config/mail_config.json，更新程式時也不會被覆蓋。"
+            ),
+            text_color=Theme.TEXT_MUTED, anchor="w", justify="left", font=Theme.FONT_SMALL
+        ).pack(anchor="w", padx=10, pady=(0, 10))
+
+    def _mail_config_from_form(self) -> dict:
+        def _int(val, default):
+            try:
+                return max(1, int(val))
+            except (TypeError, ValueError):
+                return default
+        return {
+            "email": self.entry_mail_email.get().strip(),
+            "app_password": self.entry_mail_password.get().strip(),
+            "fetch_days": _int(self.entry_mail_days.get(), 30),
+            "fetch_limit": _int(self.entry_mail_limit.get(), 300),
+            "auto_sync": self.auto_sync_var.get(),
+        }
+
+    def _save_mail_config(self):
+        cfg = self._mail_config_from_form()
+        if not cfg["email"] or not cfg["app_password"]:
+            messagebox.showwarning("警告", "請填寫 Gmail 帳號與應用程式密碼。")
+            return
+        try:
+            mail_config.save_config(cfg)
+        except Exception as e:
+            messagebox.showerror("錯誤", f"儲存設定失敗：\n{str(e)}")
+            return
+        self.mail_status_label.configure(text="✅ 已儲存", text_color=Theme.NEON_GREEN)
+
+    def _test_mail_connection(self):
+        cfg = self._mail_config_from_form()
+        if not cfg["email"] or not cfg["app_password"]:
+            messagebox.showwarning("警告", "請先填寫帳號與應用程式密碼。")
+            return
+        self.btn_mail_test.configure(state="disabled", text="🔄 測試中…")
+        self.mail_status_label.configure(text="")
+
+        def work():
+            ok, msg = mail_service.test_connection(cfg["email"], cfg["app_password"])
+            self.after(0, lambda: self._on_mail_test_done(ok, msg))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_mail_test_done(self, ok, msg):
+        self.btn_mail_test.configure(state="normal", text="🔌 測試連線")
+        if ok:
+            self.mail_status_label.configure(text=f"✅ {msg}", text_color=Theme.NEON_GREEN)
+            messagebox.showinfo("測試連線", f"✅ {msg}\n\n帳號密碼正確，可以開始使用「客戶來信」。")
+        else:
+            self.mail_status_label.configure(text="❌ 連線失敗", text_color=Theme.NEON_PINK)
+            messagebox.showerror("測試連線", f"❌ {msg}")
+
+    # ---------- 過濾名單（右側面板） ----------
+    def refresh_mail_blocklist(self):
+        """重新渲染右側過濾名單；進入信件設定頁時也會被呼叫。"""
+        if not hasattr(self, "scroll_blocklist"):
+            return
+        for w in self.scroll_blocklist.winfo_children():
+            w.destroy()
+        items = Repository.get_email_blocklist()
+        if not items:
+            ctk.CTkLabel(
+                self.scroll_blocklist,
+                text="（目前沒有過濾任何寄件人）",
+                text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, justify="left", anchor="w"
+            ).grid(row=0, column=0, sticky="w", padx=5, pady=10)
+            return
+        for i, item in enumerate(items):
+            card = ctk.CTkFrame(self.scroll_blocklist, fg_color=Theme.BG_CARD, corner_radius=6)
+            card.grid(row=i, column=0, sticky="ew", pady=3)
+            card.grid_columnconfigure(0, weight=1)
+            email_ = item.get("sender_email") or ""
+            name = item.get("sender_name") or ""
+            display = f"{name}\n{email_}" if name and name != email_ else email_
+            ctk.CTkLabel(
+                card, text=display, text_color=Theme.TEXT_MAIN, font=Theme.FONT_SMALL,
+                justify="left", anchor="w", wraplength=230
+            ).grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=6)
+            ctk.CTkButton(
+                card, text="復原", width=52, font=Theme.FONT_SMALL,
+                fg_color=Theme.NEON_GREEN, text_color=Theme.ON_ACCENT,
+                command=lambda addr=email_: self._restore_blocked(addr)
+            ).grid(row=0, column=1, sticky="e", padx=(0, 6), pady=6)
+
+    def _restore_blocked(self, sender_email):
+        if not messagebox.askyesno(
+            "復原寄件人",
+            f"確定要復原寄件人：{sender_email}？\n\n"
+            "復原後，下次同步會重新抓取該寄件人的來信。",
+        ):
+            return
+        try:
+            Repository.remove_email_blocklist(sender_email)
+        except Exception as e:
+            messagebox.showerror("錯誤", f"復原失敗：\n{str(e)}")
+            return
+        self.refresh_mail_blocklist()
+
+    # ==========================================
+    # 5. 資料同步 Tab
     # ==========================================
     def _build_sync_tab(self):
         info_frame = ctk.CTkFrame(self.tab_sync, fg_color=Theme.BG_DARK)
