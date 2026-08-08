@@ -15,8 +15,8 @@ from pathlib import Path
 # GitHub repo 建立後，把下方 GITHUB_OWNER 改成你的帳號、GITHUB_REPO 改成 repo 名稱。
 # 例如：GITHUB_OWNER = "hsinyi123"、GITHUB_REPO = "worklog-system"
 # ================================================================
-GITHUB_OWNER = "your-github-username"
-GITHUB_REPO = "worklog-system"
+GITHUB_OWNER = "yoyo20500801-ship-it"
+GITHUB_REPO = "cyber-worklog-system"
 # ================================================================
 
 # 專案根目錄（從本檔位置往上三層）
