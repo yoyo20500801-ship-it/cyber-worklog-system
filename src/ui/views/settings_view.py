@@ -27,7 +27,7 @@ class SettingsView(ctk.CTkFrame):
         self.tab_projects = self.tabview.add("專案管理")
         self.tab_schools = self.tabview.add("學校管理")
         self.tab_contacts = self.tabview.add("人員管理")
-        self.tab_sync = self.tabview.add("匯入/匯出")
+        self.tab_sync = self.tabview.add("資料同步")
 
         self._build_projects_tab()
         self._build_schools_tab()
@@ -538,7 +538,7 @@ class SettingsView(ctk.CTkFrame):
             if self.on_data_changed_callback: self.on_data_changed_callback()
 
     # ==========================================
-    # 4. 匯入/匯出 Tab
+    # 4. 資料同步 Tab
     # ==========================================
     def _build_sync_tab(self):
         info_frame = ctk.CTkFrame(self.tab_sync, fg_color=Theme.BG_DARK)
