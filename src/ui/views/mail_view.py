@@ -7,6 +7,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from src.ui.theme import Theme
+from src.ui import phone_input
 from src.core import mail_config, mail_service
 from src.db.repository import Repository
 
@@ -470,7 +471,9 @@ class _ConvertDialog(ctk.CTkToplevel):
 
         self.phone_var = ctk.StringVar(value="")
         ctk.CTkLabel(body, text="電話/分機", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=6)
-        ctk.CTkEntry(body, textvariable=self.phone_var, width=300).grid(row=3, column=1, sticky="w", padx=(0, 10), pady=6)
+        self.phone_entry = ctk.CTkEntry(body, textvariable=self.phone_var, width=300)
+        self.phone_entry.grid(row=3, column=1, sticky="w", padx=(0, 10), pady=6)
+        phone_input.bind_phone_input(self.phone_entry)
 
         ctk.CTkLabel(body, text="問題內容", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=4, column=0, sticky="nw", padx=10, pady=6)
         self.txt_issue = ctk.CTkTextbox(body, fg_color=Theme.BG_DARK, border_width=1, border_color=Theme.TEXT_MUTED, height=180)

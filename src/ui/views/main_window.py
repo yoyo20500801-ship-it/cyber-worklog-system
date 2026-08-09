@@ -19,6 +19,7 @@ from src.ui.views.db_search_view import DatabaseSearchView
 from src.ui.views.overview_view import OverviewView
 from src.ui.views.mail_view import MailView
 from src.ui.views.theme_picker import ThemePickerDialog
+from src.ui import phone_input
 
 
 def _safe_image_label(master, key, size):
@@ -291,7 +292,7 @@ class MainWindow(ctk.CTk):
 # 客製化元件：動態增長多行輸入框
 # ==========================================
 class AutoResizingTextbox(ctk.CTkTextbox):
-    def __init__(self, master, placeholder_text="", min_height=32, max_height=150, default_text_color=None, **kwargs):
+    def __init__(self, master, placeholder_text="", min_height=32, max_height=150, default_text_color=None, phone_field=False, **kwargs):
         if default_text_color is None:
             default_text_color = Theme.TEXT_MAIN
         super().__init__(master, height=min_height, wrap="word", border_width=1, border_color=Theme.TEXT_MUTED, **kwargs)
@@ -308,6 +309,8 @@ class AutoResizingTextbox(ctk.CTkTextbox):
         self.bind("<KeyRelease>", self._adjust_height)
         self.bind("<Tab>", self._focus_next)
         self.bind("<Shift-Tab>", self._focus_prev) 
+        if phone_field:
+            phone_input.bind_phone_input(self)
         
     def _clear_placeholder(self, event=None):
         if self.is_placeholder:
@@ -463,7 +466,7 @@ class WorklogView(ctk.CTkFrame):
         self.btn_open_browser = ctk.CTkButton(form_frame, text="🌐 導向專案", font=Theme.FONT_BODY, fg_color=Theme.NEON_CYAN, text_color=Theme.ON_ACCENT, hover_color=Theme.NEON_GREEN, command=self.open_browser_and_start)
         self.btn_open_browser.grid(row=1, column=2, padx=10, pady=5, sticky="nw")
 
-        self.phone_entry = AutoResizingTextbox(form_frame, placeholder_text="電話/#分機", width=160)
+        self.phone_entry = AutoResizingTextbox(form_frame, placeholder_text="電話/#分機", width=160, phone_field=True)
         self.phone_entry.grid(row=2, column=0, padx=10, pady=5, sticky="nw")
         
         self.contact_entry = AutoResizingTextbox(form_frame, placeholder_text="聯絡人", width=160)
