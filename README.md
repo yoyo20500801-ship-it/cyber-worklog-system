@@ -39,45 +39,6 @@ venv\Scripts\python src\main.py
 
 程式內建自動更新：**每次啟動時背景檢查**，也可在「系統設定 → 匯入/匯出 → 程式更新」手動按「🔄 檢查更新」。有新版本時會自動下載、關閉並重新啟動，**你的資料（worklog.db、設定、主題圖）不會遺失**。
 
-### 首次發布（建立 GitHub repo 並上傳）
-
-1. 安裝 git（https://git-scm.com/download/win），並在專案資料夾開終端機。
-2. 登入 GitHub（用你的 Google 帳號）：`gh auth login`（沒有 gh 就先 `winget install --id GitHub.cli -e`）。
-3. 建立**公開** repo 並上傳目前程式碼：
-
-   ```
-   gh repo create worklog-system --public --source . --remote origin --push
-   ```
-
-4. 告訴我你的 GitHub 帳號名稱，我會把 `src/core/updater.py` 開頭的 `GITHUB_OWNER` 填上。
-5. 打第一個版本標籤：
-
-   ```
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-
-   GitHub 會自動產生 `v1.0.0` 的原始碼 zip，所有人的程式即可檢查到更新。
-
-### 之後每次改版
-
-```
-改完程式 → 修改 VERSION 檔（例如改成 1.1.0）
-python build_release.py          # 產生發布 zip 並印出步驟
-git add -A
-git commit -m "v1.1.0"
-git push
-git tag v1.1.0
-git push origin v1.1.0
-```
-
-其他人下次開啟程式就會收到更新通知，一鍵更新並自動重啟。
-
-### 資料安全
-
-- `worklog.db`、`config/`（設定與自訂主題）已在 `.gitignore` 排除，**永遠不會上傳到 GitHub**。
-- 更新時只「新增/覆蓋」程式檔，`worklog.db`、`config/`、`assets/themes/custom_*` 一律保留。
-
 ## 頁面說明
 
 ### 總覽（Overview）
