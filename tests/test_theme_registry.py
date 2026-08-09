@@ -138,3 +138,92 @@ def test_hidden_themes_persist(tmp_path, monkeypatch):
 
     # 不存在的 key
     assert tr.set_hidden("no-such-theme", True) is False
+
+
+# ---------- 編輯主題 ----------
+def test_update_custom_theme_persists(tmp_path, monkeypatch):
+    tr = _isolate(tmp_path, monkeypatch)
+    key = tr.add_custom_theme("灰原哀・暗色", "dark", _full_colors())
+    assert (tr.ASSETS_ROOT / key).is_dir()
+
+    colors = dict(_full_colors())
+    colors["NEON_CYAN"] = "#00AAFF"
+    tr.update_theme(key, "灰原哀・新色", "light", colors)
+
+    theme = tr.list_themes()[key]
+    assert theme["label"] == "灰原哀・新色"
+    assert theme["mode"] == "light"
+    assert theme["colors"]["NEON_CYAN"] == "#00AAFF"
+    # key 不變 → 圖片資料夾保留
+    assert (tr.ASSETS_ROOT / key).is_dir()
+
+    # 重載後仍在
+    tr.load_settings()
+    assert tr.list_themes()[key]["colors"]["NEON_CYAN"] == "#00AAFF"
+
+
+def test_update_theme_validation(tmp_path, monkeypatch):
+    tr = _isolate(tmp_path, monkeypatch)
+    key = tr.add_custom_theme("測試", "dark", _full_colors())
+
+    # 空白名稱
+    try:
+        tr.update_theme(key, "  ", "dark", _full_colors())
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("空白名稱應拋出 ValueError")
+
+    # 缺色票
+    missing = dict(_full_colors())
+    missing.pop("NEON_CYAN")
+    try:
+        tr.update_theme(key, "測試", "dark", missing)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("缺色票應拋出 ValueError")
+
+    # 不存在的 key
+    try:
+        tr.update_theme("no-such", "測試", "dark", _full_colors())
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("不存在的 key 應拋出 ValueError")
+
+
+def test_update_builtin_theme_override(tmp_path, monkeypatch):
+    tr = _isolate(tmp_path, monkeypatch)
+    original = tr.THEMES["cyber"]["colors"]["NEON_CYAN"]
+
+    colors = dict(tr.THEMES["cyber"]["colors"])
+    colors["NEON_CYAN"] = "#123456"
+    tr.update_theme("cyber", "賽博龐克（改）", "dark", colors)
+
+    assert tr.list_themes()["cyber"]["colors"]["NEON_CYAN"] == "#123456"
+    assert tr.list_themes()["cyber"]["label"] == "賽博龐克（改）"
+    # 程式碼原始定義不變
+    assert tr.THEMES["cyber"]["colors"]["NEON_CYAN"] == original
+    # assets 保留
+    assert tr.list_themes()["cyber"]["assets"] == tr.THEMES["cyber"]["assets"]
+
+    # 重載後仍在
+    tr.load_settings()
+    assert tr.list_themes()["cyber"]["colors"]["NEON_CYAN"] == "#123456"
+
+
+def test_revert_builtin_theme(tmp_path, monkeypatch):
+    tr = _isolate(tmp_path, monkeypatch)
+    colors = dict(tr.THEMES["cyber"]["colors"])
+    colors["NEON_CYAN"] = "#123456"
+    tr.update_theme("cyber", "改過", "dark", colors)
+
+    assert tr.revert_builtin_theme("cyber") is True
+    assert tr.list_themes()["cyber"]["colors"]["NEON_CYAN"] == tr.THEMES["cyber"]["colors"]["NEON_CYAN"]
+    # 再次還原失敗
+    assert tr.revert_builtin_theme("cyber") is False
+
+    # 自訂主題不可「還原」
+    key = tr.add_custom_theme("自訂", "dark", _full_colors())
+    assert tr.revert_builtin_theme(key) is False

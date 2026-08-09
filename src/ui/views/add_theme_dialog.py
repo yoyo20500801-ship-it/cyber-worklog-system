@@ -49,17 +49,35 @@ COLOR_SECTIONS = [
 
 
 class AddThemeDialog(ctk.CTkToplevel):
-    def __init__(self, master):
+    """新增 / 編輯主題視窗。
+
+    傳入 theme_key 為「編輯模式」：預填現有主題的名稱、明暗與色票；
+    未傳入則為「新增模式」。on_saved 為編輯非啟用中主題儲存後的回呼（例如刷新選單）。
+    """
+
+    def __init__(self, master, theme_key=None, on_saved=None):
         super().__init__(master)
-        self.title("新增主題")
+        self.main = master  # MainWindow（用於 apply_theme）
+        self.theme_key = theme_key
+        self.on_saved = on_saved
+        self.is_edit = theme_key is not None
+        self.title("編輯主題" if self.is_edit else "新增主題")
         self.geometry("560x700")
         self.resizable(False, False)
-        self.main = master  # MainWindow（用於 apply_theme）
 
         self.name_var = ctk.StringVar()
         self.mode_var = ctk.StringVar(value="dark")
-        self.colors = dict(_DARK_DEFAULTS)
         self.color_buttons = {}
+
+        if self.is_edit:
+            existing = theme_registry.all_themes().get(theme_key)
+            if existing is None:
+                raise ValueError(f"主題不存在：{theme_key}")
+            self.colors = dict(existing["colors"])
+            self.name_var.set(existing["label"])
+            self.mode_var.set(existing["mode"])
+        else:
+            self.colors = dict(_DARK_DEFAULTS)
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -81,7 +99,10 @@ class AddThemeDialog(ctk.CTkToplevel):
         header.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 8))
         header.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(header, text="🎨 新增自訂主題", font=Theme.FONT_BODY, text_color=Theme.NEON_CYAN, anchor="w").grid(
+        ctk.CTkLabel(
+            header, text=("✏️ 編輯主題" if self.is_edit else "🎨 新增自訂主題"),
+            font=Theme.FONT_BODY, text_color=Theme.NEON_CYAN, anchor="w"
+        ).grid(
             row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 4)
         )
 
@@ -98,12 +119,15 @@ class AddThemeDialog(ctk.CTkToplevel):
             header, values=["🌙 暗色", "☀️ 明亮"],
             command=self._on_mode_change, font=Theme.FONT_SMALL
         )
-        self.mode_seg.set("🌙 暗色")
+        self.mode_seg.set("🌙 暗色" if self.mode_var.get() == "dark" else "☀️ 明亮")
         self.mode_seg.grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
 
     def _on_mode_change(self, value):
         mode = "light" if value.startswith("☀️") else "dark"
         self.mode_var.set(mode)
+        if self.is_edit:
+            # 編輯模式：只切換明暗，不覆寫使用者已設定的色票
+            return
         defaults = _LIGHT_DEFAULTS if mode == "light" else _DARK_DEFAULTS
         for token, hexv in defaults.items():
             self.colors[token] = hexv
@@ -172,8 +196,9 @@ class AddThemeDialog(ctk.CTkToplevel):
             width=80, command=self.destroy
         ).pack(side="right", padx=(0, 10))
         ctk.CTkButton(
-            footer, text="建立主題", fg_color=Theme.NEON_GREEN, text_color=Theme.ON_ACCENT,
-            width=110, command=self._create
+            footer, text=("儲存變更" if self.is_edit else "建立主題"),
+            fg_color=Theme.NEON_GREEN, text_color=Theme.ON_ACCENT,
+            width=110, command=self._save
         ).pack(side="right")
 
     def _apply_preset(self):
@@ -182,7 +207,7 @@ class AddThemeDialog(ctk.CTkToplevel):
             self.colors[token] = hexv
             self.color_buttons[token].configure(fg_color=hexv, text=hexv, hover_color=hexv, text_color=self._text_on(hexv))
 
-    def _create(self):
+    def _save(self):
         label = self.name_var.get().strip()
         if not label:
             messagebox.showwarning("警告", "請輸入主題名稱", parent=self)
@@ -192,9 +217,24 @@ class AddThemeDialog(ctk.CTkToplevel):
             messagebox.showwarning("警告", "還有未選擇的色票", parent=self)
             return
         try:
-            key = theme_registry.add_custom_theme(label, self.mode_var.get(), self.colors)
+            if self.is_edit:
+                key = theme_registry.update_theme(self.theme_key, label, self.mode_var.get(), self.colors)
+            else:
+                key = theme_registry.add_custom_theme(label, self.mode_var.get(), self.colors)
         except ValueError as e:
             messagebox.showerror("錯誤", str(e), parent=self)
+            return
+
+        if self.is_edit:
+            if theme_registry.active_theme_name() == key:
+                # 編輯的是啟用中主題 → 立即重建介面套用（本視窗與選單一併銷毀）
+                if hasattr(self.main, "apply_theme"):
+                    self.main.apply_theme(key)
+            else:
+                # 非啟用中 → 關閉並刷新選單預覽
+                self.destroy()
+                if self.on_saved:
+                    self.on_saved()
             return
 
         messagebox.showinfo(

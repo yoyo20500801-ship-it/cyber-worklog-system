@@ -7,14 +7,14 @@ from src.ui.views.add_theme_dialog import AddThemeDialog
 
 
 class ThemePickerDialog(ctk.CTkToplevel):
-    """主題選擇視窗：列出所有主題，可新增/刪除自訂主題、隱藏/顯示任何主題。"""
+    """主題選擇視窗：列出所有主題，可新增/編輯/刪除自訂主題、編輯/隱藏/顯示任何主題。"""
 
     PREVIEW_TOKENS = ("BG_DARK", "BG_CARD", "NEON_CYAN", "NEON_GREEN", "NEON_SELECT")
 
     def __init__(self, master):
         super().__init__(master)
         self.title("主題選擇")
-        self.geometry("520x560")
+        self.geometry("768x560")
         self.resizable(False, False)
         self.main = master  # MainWindow
 
@@ -108,7 +108,7 @@ class ThemePickerDialog(ctk.CTkToplevel):
             font=Theme.FONT_SMALL, text_color=Theme.TEXT_MUTED, anchor="w"
         ).pack(fill="x")
 
-        # 右側按鈕（由右至左：使用 / 隱藏|顯示 / 刪除）
+        # 右側按鈕（由右至左：使用 / 編輯 / 還原(內建已改) / 隱藏|顯示 / 刪除）
         if is_active:
             ctk.CTkLabel(
                 row, text="✓ 使用中", font=Theme.FONT_SMALL,
@@ -121,6 +121,22 @@ class ThemePickerDialog(ctk.CTkToplevel):
                 command=lambda n=name: self._apply(n)
             ).pack(side="right", padx=10)
 
+        # 編輯（所有主題皆可）
+        ctk.CTkButton(
+            row, text="✏️ 編輯", width=70, fg_color="transparent",
+            text_color=Theme.NEON_CYAN, border_width=1, border_color=Theme.NEON_CYAN,
+            command=lambda n=name: self._open_edit(n)
+        ).pack(side="right", padx=(0, 5))
+
+        # 還原預設（僅內建且被編輯過）
+        if theme_registry.is_builtin(name) and name in theme_registry.BUILTIN_OVERRIDES:
+            ctk.CTkButton(
+                row, text="↩ 還原", width=70, fg_color="transparent",
+                text_color=Theme.NEON_YELLOW, border_width=1, border_color=Theme.NEON_YELLOW,
+                command=lambda n=name: self._revert_builtin(n)
+            ).pack(side="right", padx=(0, 5))
+
+        if not is_active:
             if hidden:
                 ctk.CTkButton(
                     row, text="👁 顯示", width=70, fg_color="transparent",
@@ -135,18 +151,36 @@ class ThemePickerDialog(ctk.CTkToplevel):
                 )
                 btn_hide.pack(side="right", padx=(0, 5))
 
-            if is_custom:
-                ctk.CTkButton(
-                    row, text="🗑️ 刪除", width=70, fg_color=Theme.NEON_PINK,
-                    text_color=Theme.TEXT_MAIN,
-                    command=lambda n=name: self._delete(n)
-                ).pack(side="right", padx=(0, 5))
+        # 刪除（自訂主題皆可，含啟用中；刪除啟用中會回退預設）
+        if is_custom:
+            ctk.CTkButton(
+                row, text="🗑️ 刪除", width=70, fg_color=Theme.NEON_PINK,
+                text_color=Theme.TEXT_MAIN,
+                command=lambda n=name: self._delete(n)
+            ).pack(side="right", padx=(0, 5))
 
     # ==========================================
     # 動作
     # ==========================================
     def _open_add(self):
         AddThemeDialog(self.main)  # 建立後 apply_theme 重建，會連本視窗一起銷毀
+
+    def _open_edit(self, theme_name):
+        # 編輯模式：非啟用中主題儲存後刷新清單；啟用中主題則 apply_theme 重建
+        AddThemeDialog(self.main, theme_key=theme_name, on_saved=self._refresh)
+
+    def _revert_builtin(self, theme_name):
+        if not messagebox.askyesno(
+            "還原預設", f"確定還原主題「{theme_name}」的預設配色？目前的編輯會被捨棄。",
+            parent=self,
+        ):
+            return
+        theme_registry.revert_builtin_theme(theme_name)
+        if theme_registry.active_theme_name() == theme_name:
+            if hasattr(self.main, "apply_theme"):
+                self.main.apply_theme(theme_name)
+        else:
+            self._refresh()
 
     def _apply(self, theme_name):
         main = self.main

@@ -338,8 +338,8 @@ def send_reply(cfg: dict, email_row: dict, to_list: list, cc_list: list, body: s
     to_list = [a.strip() for a in to_list if a and a.strip().lower() != email_addr.lower()]
     cc_list = [a.strip() for a in cc_list if a and a.strip().lower() != email_addr.lower()]
     # 公司留存副本：回覆一律補上（重複則略過）
-    # if COMPANY_CC_ADDRESS.lower() not in {a.lower() for a in cc_list}:
-    #     cc_list.append(COMPANY_CC_ADDRESS)
+    if COMPANY_CC_ADDRESS.lower() not in {a.lower() for a in cc_list}:
+        cc_list.append(COMPANY_CC_ADDRESS)
     if not to_list:
         return False, "沒有有效的收件人（請確認原信寄件人信箱）"
     if not body or not body.strip():

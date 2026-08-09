@@ -112,8 +112,9 @@ THEMES = {
 DEFAULT_THEME = "cyber"
 
 _active = DEFAULT_THEME
-CUSTOM_THEMES = {}   # 使用者自訂主題（來自 config/themes.json）
-_hidden = set()      # 被隱藏的主題 key
+CUSTOM_THEMES = {}      # 使用者自訂主題（來自 config/themes.json）
+BUILTIN_OVERRIDES = {}  # 內建主題的覆蓋層（編輯過的內建主題，存於 config/themes.json）
+_hidden = set()         # 被隱藏的主題 key
 
 
 # ==========================================
@@ -121,6 +122,7 @@ _hidden = set()      # 被隱藏的主題 key
 # ==========================================
 def all_themes():
     merged = dict(THEMES)
+    merged.update(BUILTIN_OVERRIDES)
     merged.update(CUSTOM_THEMES)
     return merged
 
@@ -155,6 +157,10 @@ def get_theme_mode(theme_name=None):
 
 def is_custom(key):
     return key in CUSTOM_THEMES
+
+
+def is_builtin(key):
+    return key in THEMES
 
 
 def is_hidden(key):
@@ -222,26 +228,35 @@ def save_settings():
 # 自訂主題（config/themes.json）
 # ==========================================
 def load_custom_themes():
-    global CUSTOM_THEMES
+    global CUSTOM_THEMES, BUILTIN_OVERRIDES
+    CUSTOM_THEMES = {}
+    BUILTIN_OVERRIDES = {}
     try:
         data = json.loads(THEMES_JSON_PATH.read_text(encoding="utf-8"))
         custom = data.get("custom_themes", {})
+        overrides = data.get("builtin_overrides", {})
         if isinstance(custom, dict):
             CUSTOM_THEMES = {
                 k: v for k, v in custom.items()
                 if isinstance(v, dict) and set(REQUIRED_TOKENS).issubset(v.get("colors", {}))
             }
-        else:
-            CUSTOM_THEMES = {}
+        if isinstance(overrides, dict):
+            BUILTIN_OVERRIDES = {
+                k: v for k, v in overrides.items()
+                if k in THEMES and isinstance(v, dict) and set(REQUIRED_TOKENS).issubset(v.get("colors", {}))
+            }
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        CUSTOM_THEMES = {}
+        pass
 
 
 def save_custom_themes():
     try:
         THEMES_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
         THEMES_JSON_PATH.write_text(
-            json.dumps({"custom_themes": CUSTOM_THEMES}, ensure_ascii=False, indent=2),
+            json.dumps({
+                "custom_themes": CUSTOM_THEMES,
+                "builtin_overrides": BUILTIN_OVERRIDES,
+            }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except OSError:
@@ -296,6 +311,51 @@ def delete_custom_theme(key, delete_assets=False):
         folder = ASSETS_ROOT / key
         if folder.is_dir():
             shutil.rmtree(folder, ignore_errors=True)
+    return True
+
+
+def update_theme(key, label, mode, colors):
+    """更新主題（自訂與內建皆可，key 不變）。
+
+    內建主題以覆蓋層存於 config/themes.json，程式更新後不會被還原。
+    驗證失敗時拋出 ValueError。
+    """
+    label = label.strip()
+    if not label:
+        raise ValueError("主題名稱不可為空")
+    if mode not in ("dark", "light"):
+        raise ValueError("明暗設定不合法")
+    missing = set(REQUIRED_TOKENS) - set(colors)
+    if missing:
+        raise ValueError(f"缺少色票：{', '.join(sorted(missing))}")
+
+    new_colors = {t: colors[t] for t in REQUIRED_TOKENS}
+    if key in CUSTOM_THEMES:
+        CUSTOM_THEMES[key] = {
+            "label": label,
+            "mode": mode,
+            "colors": new_colors,
+            "assets": CUSTOM_THEMES[key].get("assets", {"mascot": "mascot.png", "input": "input.png"}),
+        }
+    elif key in THEMES:
+        BUILTIN_OVERRIDES[key] = {
+            "label": label,
+            "mode": mode,
+            "colors": new_colors,
+            "assets": dict(THEMES[key].get("assets") or {}),
+        }
+    else:
+        raise ValueError("主題不存在")
+    save_custom_themes()
+    return key
+
+
+def revert_builtin_theme(key):
+    """移除內建主題的覆蓋層，還原為程式碼預設配色。回傳是否成功。"""
+    if key not in BUILTIN_OVERRIDES:
+        return False
+    BUILTIN_OVERRIDES.pop(key, None)
+    save_custom_themes()
     return True
 
 
