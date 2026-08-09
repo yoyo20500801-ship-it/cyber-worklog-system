@@ -4,6 +4,7 @@ from datetime import datetime
 from src.ui.theme import Theme
 from src.db.repository import Repository
 from src.utils.date_helper import selectable_years
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 STATUS_ORDER = ("已處理", "待處理", "轉交")
 STATUS_COLORS = {"已處理": Theme.NEON_GREEN, "待處理": Theme.STATUS_PENDING, "轉交": Theme.STATUS_TRANSFER}
@@ -128,10 +129,10 @@ class OverviewView(ctk.CTkFrame):
         )
         self.records_title.grid(row=0, column=0, sticky="ew", padx=15, pady=(12, 5))
 
-        self.records_scroll = ctk.CTkScrollableFrame(list_frame, fg_color="transparent")
+        self.records_scroll = AutoHideScrollableFrame(list_frame, fg_color="transparent")
         self.records_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
-        self.stats_panel = ctk.CTkScrollableFrame(
+        self.stats_panel = AutoHideScrollableFrame(
             self.main_area, fg_color=Theme.BG_CARD, corner_radius=8, width=340
         )
         self.stats_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))

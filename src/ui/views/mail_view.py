@@ -10,6 +10,8 @@ from src.ui.theme import Theme
 from src.ui import phone_input
 from src.core import mail_config, mail_service
 from src.db.repository import Repository
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
+from src.ui.components.pager import PaginationBar
 
 
 class MailView(ctk.CTkFrame):
@@ -57,8 +59,11 @@ class MailView(ctk.CTkFrame):
         self.status_label.pack(side="right", padx=(0, 10))
 
     def _build_list(self):
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 10))
+        self.scroll = AutoHideScrollableFrame(self, fg_color="transparent")
+        self.scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+
+        self.pager = PaginationBar(self, page_size=30, on_change=self._on_page_change)
+        self.pager.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 10))
 
     # ==========================================
     # 同步
@@ -125,9 +130,20 @@ class MailView(ctk.CTkFrame):
     # ==========================================
     # 清單渲染
     # ==========================================
+    def _query_key(self):
+        return (self.entry_search.get().strip(), self.filter_var.get())
+
+    def _on_page_change(self):
+        self.refresh_list()
+
     def refresh_list(self):
         for w in self.scroll.winfo_children():
             w.destroy()
+
+        key = self._query_key()
+        if key != getattr(self, "_last_query_key", None):
+            self.pager.set_page(1)
+            self._last_query_key = key
 
         cfg = mail_config.load_config()
         if not mail_config.is_configured(cfg):
@@ -136,12 +152,15 @@ class MailView(ctk.CTkFrame):
                 text="尚未設定信箱帳號。\n請到「系統設定 → 信件設定」填入 Gmail 帳號與應用程式密碼。",
                 text_color=Theme.TEXT_MUTED, justify="center",
             ).pack(pady=50)
+            self.pager.set_total(0)
+            self.status_label.configure(text="", text_color=Theme.TEXT_MUTED)
             return
 
         emails = Repository.get_emails(
             search=(self.entry_search.get().strip() or None),
             filter_mode=self.filter_var.get(),
         )
+        self.pager.set_total(len(emails))
         if not emails:
             ctk.CTkLabel(
                 self.scroll,
@@ -151,7 +170,7 @@ class MailView(ctk.CTkFrame):
             self.status_label.configure(text="", text_color=Theme.TEXT_MUTED)
             return
 
-        for e in emails:
+        for e in self.pager.get_slice(emails):
             self._render_card(e)
         self.status_label.configure(text=f"共 {len(emails)} 封", text_color=Theme.TEXT_MUTED)
 

@@ -7,6 +7,7 @@ from src.ui.theme import Theme
 from src.core import updater
 from src.core import mail_config, mail_service
 from src.db.repository import Repository
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 class SettingsView(ctk.CTkFrame):
     def __init__(self, master, on_data_changed_callback=None):
@@ -95,7 +96,7 @@ class SettingsView(ctk.CTkFrame):
         self.sort_mode_projects.pack(side="left", padx=(10, 0))
 
         # 清單容器
-        self.scroll_proj = ctk.CTkScrollableFrame(self.tab_projects, fg_color="transparent")
+        self.scroll_proj = AutoHideScrollableFrame(self.tab_projects, fg_color="transparent")
         self.scroll_proj.pack(fill="both", expand=True, padx=15, pady=(0, 5))
         self.proj_page_bar = _PaginationBar(self.tab_projects, on_change=lambda p: self._set_page("proj", p))
         self.proj_page_bar.pack(fill="x", padx=15, pady=(0, 10))
@@ -218,7 +219,7 @@ class SettingsView(ctk.CTkFrame):
         self.entry_sch_search.bind("<Return>", lambda _: self.refresh_schools_list())
         self.entry_sch_search.pack(side="left", padx=(10,0))
 
-        self.scroll_sch = ctk.CTkScrollableFrame(self.tab_schools, fg_color="transparent")
+        self.scroll_sch = AutoHideScrollableFrame(self.tab_schools, fg_color="transparent")
         self.scroll_sch.pack(fill="both", expand=True, padx=15, pady=(0, 5))
 
         # 快速加入模式的動作列（返回 / 加入所選）
@@ -478,7 +479,7 @@ class SettingsView(ctk.CTkFrame):
         self.sort_mode_contacts.set("手動排序")
         self.sort_mode_contacts.pack(side="left", padx=(10, 0))
 
-        self.scroll_contact = ctk.CTkScrollableFrame(self.tab_contacts, fg_color="transparent")
+        self.scroll_contact = AutoHideScrollableFrame(self.tab_contacts, fg_color="transparent")
         self.scroll_contact.pack(fill="both", expand=True, padx=15, pady=(0, 5))
         self.contact_page_bar = _PaginationBar(self.tab_contacts, on_change=lambda p: self._set_page("contact", p))
         self.contact_page_bar.pack(fill="x", padx=15, pady=(0, 10))
@@ -571,7 +572,7 @@ class SettingsView(ctk.CTkFrame):
             text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, justify="left", anchor="w"
         ).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
 
-        self.scroll_blocklist = ctk.CTkScrollableFrame(right, fg_color="transparent")
+        self.scroll_blocklist = AutoHideScrollableFrame(right, fg_color="transparent")
         self.scroll_blocklist.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self.scroll_blocklist.grid_columnconfigure(0, weight=1)
 
@@ -1030,7 +1031,7 @@ class _ImportPreviewDialog(ctk.CTkToplevel):
             text_color=Theme.TEXT_MAIN, font=Theme.FONT_SMALL
         ).pack(anchor="w", padx=10, pady=8)
 
-        body = ctk.CTkScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
+        body = AutoHideScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
         body.grid(row=1, column=0, sticky="nsew", padx=15, pady=(5, 10))
         body.grid_columnconfigure(0, weight=1)
 

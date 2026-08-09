@@ -5,6 +5,8 @@ from tkinter import messagebox
 from src.ui.theme import Theme
 from src.db.repository import Repository
 from src.utils.date_helper import selectable_years
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
+from src.ui.components.pager import PaginationBar
 
 
 class TransferSystemView(ctk.CTkFrame):
@@ -61,8 +63,11 @@ class TransferSystemView(ctk.CTkFrame):
         self.btn_refresh.pack(side="right", padx=(0, 15))
 
     def _build_list(self):
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.scroll.grid(row=1, column=0, sticky="nsew")
+        self.scroll = AutoHideScrollableFrame(self, fg_color="transparent")
+        self.scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+
+        self.pager = PaginationBar(self, page_size=30, on_change=self._on_page_change)
+        self.pager.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 10))
 
     def reset_to_now(self):
         now = datetime.now()
@@ -71,16 +76,24 @@ class TransferSystemView(ctk.CTkFrame):
         self.month_var.set(str(now.month).zfill(2))
         self.refresh_list()
 
+    def _on_page_change(self):
+        self.refresh_list()
+
     def refresh_list(self):
         for w in self.scroll.winfo_children():
             w.destroy()
         y = self.year_var.get()
         m = self.month_var.get()
+        key = (y, m)
+        if key != getattr(self, "_last_query_key", None):
+            self.pager.set_page(1)
+            self._last_query_key = key
         self.current_logs = Repository.get_transfer_logs_by_month(y, m)
+        self.pager.set_total(len(self.current_logs))
         if not self.current_logs:
             ctk.CTkLabel(self.scroll, text=f"沒有 {y} 年 {m} 月的轉交紀錄。", text_color=Theme.TEXT_MUTED).pack(pady=30)
             return
-        for log in self.current_logs:
+        for log in self.pager.get_slice(self.current_logs):
             self._build_card(log)
 
     def _build_card(self, log):

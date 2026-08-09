@@ -20,6 +20,7 @@ from src.ui.views.overview_view import OverviewView
 from src.ui.views.mail_view import MailView
 from src.ui.views.theme_picker import ThemePickerDialog
 from src.ui import phone_input
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 
 def _safe_image_label(master, key, size):
@@ -47,7 +48,7 @@ class MainWindow(ctk.CTk):
         super().__init__()
 
         self.title("工作日誌系統")
-        self.geometry("1280x720") 
+        self.geometry("1280x768") 
         self.configure(fg_color=Theme.BG_DARK)
 
         # 設定視窗圖示（左上角 + 工作列）；缺檔或失敗時沿用預設，不影響啟動
@@ -553,7 +554,7 @@ class WorklogView(ctk.CTkFrame):
         self.btn_edit = ctk.CTkButton(header, text="📝 編輯", width=80, command=self.execute_edit)
         self.btn_edit.pack(side="right", padx=5)
         
-        self.scroll_frame = ctk.CTkScrollableFrame(self.list_frame, fg_color="transparent")
+        self.scroll_frame = AutoHideScrollableFrame(self.list_frame, fg_color="transparent")
         self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
     # ==========================================

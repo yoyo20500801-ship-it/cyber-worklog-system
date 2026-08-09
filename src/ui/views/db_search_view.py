@@ -2,6 +2,8 @@
 import customtkinter as ctk
 from src.ui.theme import Theme
 from src.db.repository import Repository
+from src.ui.components.dual_scroll_frame import DualScrollableFrame
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 
 class DatabaseSearchView(ctk.CTkFrame):
@@ -35,7 +37,7 @@ class DatabaseSearchView(ctk.CTkFrame):
             font=Theme.FONT_BODY, text_color=Theme.NEON_CYAN, anchor="w"
         ).grid(row=0, column=0, sticky="ew", padx=15, pady=(15, 5))
 
-        self.schema_scroll = ctk.CTkScrollableFrame(panel, fg_color="transparent")
+        self.schema_scroll = AutoHideScrollableFrame(panel, fg_color="transparent")
         self.schema_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 15))
 
     # ==========================================
@@ -94,8 +96,9 @@ class DatabaseSearchView(ctk.CTkFrame):
             text_color=Theme.NEON_CYAN, anchor="w"
         ).grid(row=0, column=0, sticky="ew", padx=15, pady=(15, 5))
 
-        self.result_scroll = ctk.CTkScrollableFrame(result_frame, fg_color="transparent")
-        self.result_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.result_area = DualScrollableFrame(result_frame, fg_color="transparent")
+        self.result_area.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.result_content = self.result_area.get_content_frame()
 
     # ==========================================
     # 行為
@@ -141,15 +144,17 @@ class DatabaseSearchView(ctk.CTkFrame):
         sql = self.sql_textbox.get("0.0", "end-1c").strip()
         if not sql:
             return
-        for w in self.result_scroll.winfo_children():
+        for w in self.result_content.winfo_children():
             w.destroy()
+        self.result_area.canvas.yview_moveto(0)
+        self.result_area.canvas.xview_moveto(0)
 
         try:
             result = Repository.execute_sql(sql)
         except Exception as e:
             self.status_label.configure(text="執行失敗", text_color=Theme.NEON_PINK)
             ctk.CTkLabel(
-                self.result_scroll, text=f"❌ SQL 錯誤：\n{e}",
+                self.result_content, text=f"❌ SQL 錯誤：\n{e}",
                 text_color=Theme.NEON_PINK, anchor="w", justify="left"
             ).pack(fill="x", padx=10, pady=10)
             return
@@ -160,9 +165,10 @@ class DatabaseSearchView(ctk.CTkFrame):
             count = result["rowcount"]
             self.status_label.configure(text=f"✅ 執行成功，影響 {count} 列", text_color=Theme.NEON_GREEN)
             ctk.CTkLabel(
-                self.result_scroll, text=f"執行成功，影響 {count} 列。",
+                self.result_content, text=f"執行成功，影響 {count} 列。",
                 text_color=Theme.NEON_GREEN
             ).pack(anchor="w", padx=10, pady=10)
+        self.result_area.refresh()
 
     def _render_select_result(self, result):
         columns = result["columns"]
@@ -171,11 +177,11 @@ class DatabaseSearchView(ctk.CTkFrame):
 
         if total == 0:
             self.status_label.configure(text="查詢完成，0 列", text_color=Theme.TEXT_MUTED)
-            ctk.CTkLabel(self.result_scroll, text="查詢完成，沒有任何資料列。", text_color=Theme.TEXT_MUTED).pack(anchor="w", padx=10, pady=10)
+            ctk.CTkLabel(self.result_content, text="查詢完成，沒有任何資料列。", text_color=Theme.TEXT_MUTED).pack(anchor="w", padx=10, pady=10)
             return
 
         display = rows[: self.MAX_DISPLAY_ROWS]
-        grid = ctk.CTkFrame(self.result_scroll, fg_color="transparent")
+        grid = ctk.CTkFrame(self.result_content, fg_color="transparent")
         grid.pack(fill="both", expand=True, padx=5, pady=5)
 
         for c, col in enumerate(columns):

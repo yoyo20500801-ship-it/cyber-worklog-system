@@ -5,6 +5,7 @@ import customtkinter as ctk
 from tkinter import colorchooser, messagebox
 from src.ui.theme import Theme
 from src.ui import theme_registry
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 # 預設配色（粉嫩），作為「套用預設配色」與起始色票
 _DARK_DEFAULTS = {
@@ -138,7 +139,7 @@ class AddThemeDialog(ctk.CTkToplevel):
     # 色票區（滾動）
     # ==========================================
     def _build_color_area(self):
-        body = ctk.CTkScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
+        body = AutoHideScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
         body.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 8))
         body.grid_columnconfigure(1, weight=1)
 

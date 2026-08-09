@@ -4,6 +4,7 @@ from tkinter import messagebox
 from src.ui.theme import Theme
 from src.ui import theme_registry
 from src.ui.views.add_theme_dialog import AddThemeDialog
+from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 
 
 class ThemePickerDialog(ctk.CTkToplevel):
@@ -22,7 +23,7 @@ class ThemePickerDialog(ctk.CTkToplevel):
         self.grid_rowconfigure(1, weight=1)
 
         self._build_header()
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
+        self.scroll = AutoHideScrollableFrame(self, fg_color=Theme.BG_CARD, corner_radius=8)
         self.scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(4, 10))
         self.scroll.grid_columnconfigure(0, weight=1)
 
