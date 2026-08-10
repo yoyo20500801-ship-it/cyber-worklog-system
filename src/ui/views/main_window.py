@@ -708,10 +708,15 @@ class WorklogView(ctk.CTkFrame):
                 Repository.update_worklog(self.editing_log_id, data)
             else:
                 Repository.add_worklog(data)
+        except Exception as e:
+            messagebox.showerror("錯誤", f"資料庫存檔失敗：\n{str(e)}")
+            return
+
+        try:
             self.clear_form()
             self.refresh_list()
         except Exception as e:
-            messagebox.showerror("錯誤", f"資料庫存檔失敗：\n{str(e)}")
+            messagebox.showerror("錯誤", f"畫面更新失敗：\n{str(e)}")
 
     def clear_form(self):
         self.editing_log_id = None
@@ -896,7 +901,7 @@ class WorklogView(ctk.CTkFrame):
             #         text_color="#3399FF", anchor="w"
             #     ).pack(side="left", fill="x", expand=True, padx=(344, 0))
             elif not details:
-                top_row.configure(pady=(10, 10)) # 如果二三排都沒有，增加底部留白
+                top_row.pack_configure(pady=(10, 10)) # 如果二三排都沒有，增加底部留白
 
             def make_clickable(widget, v=var):
                 widget.bind("<Button-1>", lambda e: [v.set(not v.get()), self.update_action_buttons_state()])
