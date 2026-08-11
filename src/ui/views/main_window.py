@@ -21,6 +21,7 @@ from src.ui.views.mail_view import MailView
 from src.ui.views.theme_picker import ThemePickerDialog
 from src.ui import phone_input
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
+from src.ui.components.pager import PaginationBar
 
 
 def _safe_image_label(master, key, size):
@@ -557,6 +558,9 @@ class WorklogView(ctk.CTkFrame):
         self.scroll_frame = AutoHideScrollableFrame(self.list_frame, fg_color="transparent")
         self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
+        self.pager = PaginationBar(self.list_frame, page_size=30, on_change=self._on_page_change)
+        self.pager.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 12))
+
     # ==========================================
     # 核心邏輯與按鈕事件
     # ==========================================
@@ -808,6 +812,9 @@ class WorklogView(ctk.CTkFrame):
         self.date_var.set(self._default_date_for_selection())
         self.refresh_list()
 
+    def _on_page_change(self):
+        self.refresh_list()
+
     def _refresh_year_options(self):
         years = selectable_years(Repository.get_min_worklog_year())
         self.top_combo_year.configure(values=years)
@@ -829,86 +836,97 @@ class WorklogView(ctk.CTkFrame):
         y = self.filter_year_var.get()
         m = self.filter_month_var.get()
         status = None if self.history_status_var.get() == "全部" else self.history_status_var.get()
+
+        # 篩選條件改變時跳回第一頁
+        key = (y, m, status)
+        if key != getattr(self, "_last_query_key", None):
+            self.pager.set_page(1)
+            self._last_query_key = key
+
         logs = Repository.get_worklogs_by_month(y, m, status)
+        self.pager.set_total(len(logs))
         self.update_action_buttons_state()
-        
+
         if not logs:
             ctk.CTkLabel(self.scroll_frame, text=f"尚無 {y} 年 {m} 月 的工作日誌。", text_color=Theme.TEXT_MUTED).pack(pady=20)
             return
-            
-        for log in logs:
-            self.current_logs_data[log['id']] = log
-            card = ctk.CTkFrame(self.scroll_frame, fg_color=Theme.BG_DARK, corner_radius=6)
-            card.pack(fill="x", pady=4, padx=5)
-            
-            var = ctk.BooleanVar(value=False)
-            self.selected_logs[log['id']] = var
-            
-            # === 第一排：左側(勾選/時間/專案/學校) 與 右側(問題/電話/聯絡人/狀態) ===
-            top_row = ctk.CTkFrame(card, fg_color="transparent")
-            top_row.pack(fill="x", padx=10, pady=(10, 5))
-            
-            chk = ctk.CTkCheckBox(top_row, text="", variable=var, width=24, checkbox_width=18, checkbox_height=18, command=self.update_action_buttons_state)
-            chk.pack(side="left", padx=(0, 10))
-            
-            d_obj = datetime.strptime(log['work_date'], "%Y-%m-%d")
-            t_str = log['work_time'][:5] if log['work_time'] else ""
+
+        for log in self.pager.get_slice(logs):
+            try:
+                self._build_log_card(log)
+            except Exception:
+                continue  # 單筆資料異常時跳過，避免整個列表或啟動崩潰
+
+    def _build_log_card(self, log):
+        self.current_logs_data[log['id']] = log
+        card = ctk.CTkFrame(self.scroll_frame, fg_color=Theme.BG_DARK, corner_radius=6)
+        card.pack(fill="x", pady=4, padx=5)
+
+        var = ctk.BooleanVar(value=False)
+        self.selected_logs[log['id']] = var
+
+        # === 第一排：左側(勾選/時間/專案/學校) 與 右側(問題/電話/聯絡人/狀態) ===
+        top_row = ctk.CTkFrame(card, fg_color="transparent")
+        top_row.pack(fill="x", padx=10, pady=(10, 5))
+
+        chk = ctk.CTkCheckBox(top_row, text="", variable=var, width=24, checkbox_width=18, checkbox_height=18, command=self.update_action_buttons_state)
+        chk.pack(side="left", padx=(0, 10))
+
+        try:
+            d_obj = datetime.strptime(log.get('work_date') or "", "%Y-%m-%d")
+        except (ValueError, TypeError):
+            d_obj = None
+        t_str = (log.get('work_time') or "")[:5]
+        if d_obj:
             time_str = f"{d_obj.month}/{d_obj.day} {t_str}"
-            status = log['status']
-            color = Theme.NEON_GREEN if status == "已處理" else (Theme.STATUS_PENDING if status == "待處理" else Theme.STATUS_TRANSFER)
-            
-            # 左半部固定寬度
-            ctk.CTkLabel(top_row, text=time_str, text_color=Theme.TEXT_MUTED, width=75, anchor="w").pack(side="left")
-            ctk.CTkLabel(top_row, text=f"[{log.get('project_name', '未知')}]", text_color=Theme.NEON_CYAN, width=120, anchor="w").pack(side="left", padx=(0, 5))
-            ctk.CTkLabel(top_row, text=log.get('school_name', ''), text_color=Theme.TEXT_MAIN, width=100, anchor="w").pack(side="left", padx=(0, 10))
-            
-            # 右側資訊 (由右至左 pack，確保靠右對齊)
-            ctk.CTkLabel(top_row, text=status, text_color=color, width=55, anchor="e").pack(side="right", padx=(5, 0))
-            if log.get('contact_person'):
-                ctk.CTkLabel(top_row, text=f"👤 {log['contact_person']}", text_color=Theme.TEXT_MUTED, anchor="e").pack(side="right", padx=5)
-            if log.get('phone_ext'):
-                ctk.CTkLabel(top_row, text=f"☎ {log['phone_ext']}", text_color=Theme.TEXT_MUTED, anchor="e").pack(side="right", padx=5)
+        else:
+            time_str = f"{log.get('work_date') or ''} {t_str}".strip()
+        status = log.get('status') or '待處理'
+        color = Theme.NEON_GREEN if status == "已處理" else (Theme.STATUS_PENDING if status == "待處理" else Theme.STATUS_TRANSFER)
 
-            # 問題內容 (填滿中間剩餘空間)
-            ctk.CTkLabel(top_row, text=log['issue_content'], text_color=Theme.TEXT_MAIN, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
-            
-            # === 第二排：處理情形、個資 (對齊上方問題內容的位置) ===
-            details = []
-            if log.get('solution'): details.append(f"▸ 處理情形: {log['solution']}")
-            if log.get('pii_info'): details.append(f"🔒 個資: {log['pii_info']}")
+        # 左半部固定寬度
+        ctk.CTkLabel(top_row, text=time_str, text_color=Theme.TEXT_MUTED, width=75, anchor="w").pack(side="left")
+        ctk.CTkLabel(top_row, text=f"[{log.get('project_name', '未知')}]", text_color=Theme.NEON_CYAN, width=120, anchor="w").pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(top_row, text=log.get('school_name', ''), text_color=Theme.TEXT_MAIN, width=100, anchor="w").pack(side="left", padx=(0, 10))
 
+        # 右側資訊 (由右至左 pack，確保靠右對齊)
+        ctk.CTkLabel(top_row, text=status, text_color=color, width=55, anchor="e").pack(side="right", padx=(5, 0))
+        if log.get('contact_person'):
+            ctk.CTkLabel(top_row, text=f"👤 {log['contact_person']}", text_color=Theme.TEXT_MUTED, anchor="e").pack(side="right", padx=5)
+        if log.get('phone_ext'):
+            ctk.CTkLabel(top_row, text=f"☎ {log['phone_ext']}", text_color=Theme.TEXT_MUTED, anchor="e").pack(side="right", padx=5)
+
+        # 問題內容 (填滿中間剩餘空間)
+        ctk.CTkLabel(top_row, text=(log.get('issue_content') or ''), text_color=Theme.TEXT_MAIN, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+
+        # === 第二排：處理情形、個資 (對齊上方問題內容的位置) ===
+        details = []
+        if log.get('solution'): details.append(f"▸ 處理情形: {log['solution']}")
+        if log.get('pii_info'): details.append(f"🔒 個資: {log['pii_info']}")
+
+        if details or log.get('transfer_to'):
+            bottom_row = ctk.CTkFrame(card, fg_color="transparent")
+            bottom_row.pack(fill="x", padx=10, pady=(0, 5))
             if details:
-                bottom_row = ctk.CTkFrame(card, fg_color="transparent")
-                bottom_row.pack(fill="x", padx=10, pady=(0, 5))
                 # 左側偏移量：34(勾選) + 75(時間) + 125(專案) + 110(學校) = 344px
                 ctk.CTkLabel(
-                    bottom_row, text="   |   ".join(details), 
+                    bottom_row, text="   |   ".join(details),
                     text_color=Theme.TEXT_MUTED, anchor="w", justify="left"
                 ).pack(side="left", fill="x", expand=True, padx=(344, 0))
-
             if log.get('transfer_to'):
-                                ctk.CTkLabel(
-                                    bottom_row, text=f"⮑ 轉交人員: {log['transfer_to']}", 
-                                    text_color=Theme.STATUS_TRANSFER, anchor="e"
-                                ).pack(side="right", padx=(10, 5))
+                ctk.CTkLabel(
+                    bottom_row, text=f"⮑ 轉交人員: {log['transfer_to']}",
+                    text_color=Theme.STATUS_TRANSFER, anchor="e"
+                ).pack(side="right", padx=(10, 5))
+        else:
+            top_row.pack_configure(pady=(10, 10)) # 如果二三排都沒有，增加底部留白
 
-            # === 第三排：轉交人員 (對齊上方問題內容的位置) ===
-            # if status == "轉交" and log.get('transfer_to'):
-            #     trans_row = ctk.CTkFrame(card, fg_color="transparent")
-            #     trans_row.pack(fill="x", padx=10, pady=(0, 10))
-            #     ctk.CTkLabel(
-            #         trans_row, text=f"⮑ 轉交人員: {log['transfer_to']}", 
-            #         text_color="#3399FF", anchor="w"
-            #     ).pack(side="left", fill="x", expand=True, padx=(344, 0))
-            elif not details:
-                top_row.pack_configure(pady=(10, 10)) # 如果二三排都沒有，增加底部留白
-
-            def make_clickable(widget, v=var):
-                widget.bind("<Button-1>", lambda e: [v.set(not v.get()), self.update_action_buttons_state()])
-                for child in widget.winfo_children():
-                    if not isinstance(child, ctk.CTkCheckBox):
-                        make_clickable(child, v)
-            make_clickable(card)
+        def make_clickable(widget, v=var):
+            widget.bind("<Button-1>", lambda e: [v.set(not v.get()), self.update_action_buttons_state()])
+            for child in widget.winfo_children():
+                if not isinstance(child, ctk.CTkCheckBox):
+                    make_clickable(child, v)
+        make_clickable(card)
 
     def open_browser_and_start(self):
         # 開啟目前選中專案設定的網址；未選專案或沒設網址時提示
