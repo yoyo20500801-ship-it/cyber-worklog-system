@@ -13,6 +13,23 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
+# 檢查 tkinter：Python 安裝時未勾選「tcl/tk and IDLE」會缺少此元件，
+# pythonw 無主控台會靜默失敗，故改用 Windows 訊息框明確提示原因。
+try:
+    import tkinter  # noqa: F401
+except ModuleNotFoundError:
+    import ctypes
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        "無法啟動：Python 缺少 tkinter 元件。\n\n"
+        "請重新執行 Python 安裝程式，選擇「Modify」，"
+        "勾選「tcl/tk and IDLE」後完成安裝，"
+        "再重新執行一次 安裝.bat 即可。",
+        "工作日誌 - 啟動失敗",
+        0x10,
+    )
+    sys.exit(1)
+
 import customtkinter as ctk
 from src.db.connection import init_db
 from src.ui import theme_registry
