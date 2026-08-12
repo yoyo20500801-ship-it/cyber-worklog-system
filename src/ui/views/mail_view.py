@@ -7,7 +7,6 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from src.ui.theme import Theme
-from src.ui import phone_input
 from src.core import mail_config, mail_service
 from src.db.repository import Repository
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
@@ -471,8 +470,8 @@ class _ConvertDialog(ctk.CTkToplevel):
         self.data = None
         self.projects = Repository.get_all_projects()
         self.title("轉成工作日誌")
-        self.geometry("620x560")
-        self.minsize(540, 500)
+        self.geometry("620x660")
+        self.minsize(540, 580)
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(5, weight=1)
@@ -504,18 +503,20 @@ class _ConvertDialog(ctk.CTkToplevel):
         ctk.CTkLabel(body, text="聯絡人", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=6)
         ctk.CTkEntry(body, textvariable=self.contact_var, width=300).grid(row=2, column=1, sticky="w", padx=(0, 10), pady=6)
 
-        self.phone_var = ctk.StringVar(value="")
+        self.phone_var = ctk.StringVar(value="Email")
         ctk.CTkLabel(body, text="電話/分機", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=6)
         self.phone_entry = ctk.CTkEntry(body, textvariable=self.phone_var, width=300)
         self.phone_entry.grid(row=3, column=1, sticky="w", padx=(0, 10), pady=6)
-        phone_input.bind_phone_input(self.phone_entry)
 
         ctk.CTkLabel(body, text="問題內容", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=4, column=0, sticky="nw", padx=10, pady=6)
-        self.txt_issue = ctk.CTkTextbox(body, fg_color=Theme.BG_DARK, border_width=1, border_color=Theme.TEXT_MUTED, height=180)
+        self.txt_issue = ctk.CTkTextbox(body, fg_color=Theme.BG_DARK, border_width=1, border_color=Theme.TEXT_MUTED, height=130)
         self.txt_issue.grid(row=4, column=1, sticky="nsew", padx=(0, 10), pady=6)
         subject = e.get("subject") or ""
-        em_body = e.get("body") or ""
-        self.txt_issue.insert("1.0", f"[客戶來信] {subject}\n\n{em_body}")
+        self.txt_issue.insert("1.0", f"[客戶來信] {subject}")
+
+        ctk.CTkLabel(body, text="處理情形", text_color=Theme.TEXT_MUTED, font=Theme.FONT_SMALL, anchor="w").grid(row=5, column=0, sticky="nw", padx=10, pady=6)
+        self.txt_solution = ctk.CTkTextbox(body, fg_color=Theme.BG_DARK, border_width=1, border_color=Theme.TEXT_MUTED, height=130)
+        self.txt_solution.grid(row=5, column=1, sticky="nsew", padx=(0, 10), pady=6)
 
         hint = ctk.CTkLabel(
             self, text=f"自動比對：{self._suggest_text(suggest)}",
@@ -585,7 +586,7 @@ class _ConvertDialog(ctk.CTkToplevel):
             "phone_ext": self.phone_var.get().strip() or None,
             "pii_info": None,
             "issue_content": issue,
-            "solution": None,
+            "solution": self.txt_solution.get("1.0", "end-1c").strip() or None,
             "status": "待處理",
             "transfer_to": None,
             "finish_date": None,

@@ -163,6 +163,22 @@ def _migrate_schools_many_to_many(conn):
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
 
+def _normalize_email_thread_keys(conn):
+    """將既有信件執行緒鍵正規化（移除 <> 角括號）。
+
+    舊版在「信件自身 Message-ID 為執行緒根」時會保留角括號，而寄件備份
+    回覆信計算出來的鍵沒有括號，導致比對不到、無法標記「已回覆」。
+    此遷移一次修正歷史資料（TRIM 只移除兩端的 < >，安全且可重複執行）。
+    """
+    try:
+        conn.execute(
+            "UPDATE emails SET thread_key = TRIM(thread_key, '<>') "
+            "WHERE thread_key LIKE '%<%' OR thread_key LIKE '%>%'"
+        )
+    except sqlite3.OperationalError:
+        pass  # emails 表尚未建立時忽略
+
+
 def _ensure_indexes(conn):
     """為既有資料庫補上效能索引（CREATE INDEX IF NOT EXISTS 無副作用）。"""
     statements = [
@@ -194,4 +210,6 @@ def init_db():
             _ensure_sort_order_column(conn, table)
         # 補上效能索引（相容舊版資料庫）
         _ensure_indexes(conn)
+        # 信件執行緒鍵正規化（移除角括號，讓「已回覆」判斷一致）
+        _normalize_email_thread_keys(conn)
     print("✅ 資料庫初始化完成！")

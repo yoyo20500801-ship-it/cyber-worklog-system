@@ -130,11 +130,15 @@ def _message_ids(value):
 
 
 def _thread_key(msg):
-    """執行緒根 = References 最舊的 Message-ID；沒有則用自身 Message-ID。"""
+    """執行緒根 = References 最舊的 Message-ID；沒有則用自身 Message-ID。
+
+    一律移除 <> 角括號，讓收件匣與寄件備份算出的執行緒鍵一致，
+    否則以 Message-ID 為根的信件（含括號）永遠對不上寄件備份的回覆。
+    """
     chain = _message_ids(msg.get("References", "")) + _message_ids(msg.get("In-Reply-To", ""))
     if chain:
         return chain[0]
-    return (msg.get("Message-ID") or "").strip()
+    return (msg.get("Message-ID") or "").strip().strip("<>")
 
 
 def _is_internal(sender_email, cfg):

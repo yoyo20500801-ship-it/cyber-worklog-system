@@ -96,7 +96,7 @@ def test_thread_key_falls_back_to_in_reply_to():
 
 def test_thread_key_falls_back_to_own_id():
     raw = "Message-ID: <Z@z>\r\n\r\nbody"
-    assert ms._thread_key(_msg_from_string(raw)) == "<Z@z>"
+    assert ms._thread_key(_msg_from_string(raw)) == "Z@z"
 
 
 # ---------- 寄件備份掃描（在 Gmail 直接回覆也能被偵測） ----------
