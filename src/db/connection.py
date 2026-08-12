@@ -6,6 +6,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DB_PATH = BASE_DIR / "worklog.db"
 SCHEMA_PATH = BASE_DIR / "database" / "schema.sql"
 
+# 資料版本號：任何寫入（INSERT/UPDATE/DELETE）成功提交後 +1，
+# 供各視圖判斷「資料是否有變動」以決定是否要重新渲染。
+_DATA_VERSION = 0
+
+
+def bump_data_version():
+    global _DATA_VERSION
+    _DATA_VERSION += 1
+
+
+def get_data_version():
+    return _DATA_VERSION
+
+
 class DBConnection:
     """SQLite 連線管理 (Context Manager)"""
     def __init__(self, db_path=DB_PATH):
@@ -31,6 +45,9 @@ class DBConnection:
         else:
             # 正常結束時自動 Commit
             self.conn.commit()
+            # 本連線有任何寫入（total_changes > 0）→ 資料版本 +1
+            if self.conn.total_changes:
+                bump_data_version()
             
         # 關閉連線
         self.conn.close()
@@ -146,6 +163,24 @@ def _migrate_schools_many_to_many(conn):
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
 
+def _ensure_indexes(conn):
+    """為既有資料庫補上效能索引（CREATE INDEX IF NOT EXISTS 無副作用）。"""
+    statements = [
+        "CREATE INDEX IF NOT EXISTS idx_emails_thread_key ON emails(thread_key)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_replied ON emails(replied)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_worklog_id ON emails(worklog_id)",
+        "CREATE INDEX IF NOT EXISTS idx_worklogs_work_date ON worklogs(work_date)",
+        "CREATE INDEX IF NOT EXISTS idx_worklogs_status ON worklogs(status)",
+        "CREATE INDEX IF NOT EXISTS idx_worklogs_project_id ON worklogs(project_id)",
+        "CREATE INDEX IF NOT EXISTS idx_worklogs_school_id ON worklogs(school_id)",
+        "CREATE INDEX IF NOT EXISTS idx_worklogs_created_at ON worklogs(created_at)",
+    ]
+    for sql in statements:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # 資料表尚未建立時忽略
+
 def init_db():
     """初始化資料庫：執行 schema.sql 建立資料表，並處理舊版資料庫遷移"""
     with DBConnection() as conn:
@@ -157,4 +192,6 @@ def init_db():
         # 相容舊版資料庫：補上 sort_order 欄位
         for table in ("projects", "contacts"):
             _ensure_sort_order_column(conn, table)
+        # 補上效能索引（相容舊版資料庫）
+        _ensure_indexes(conn)
     print("✅ 資料庫初始化完成！")

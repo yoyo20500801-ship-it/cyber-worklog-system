@@ -151,6 +151,143 @@ def _make_body_text(rows):
     return "\n".join(f"{r[0]} <{r[1]}>" for r in rows if r[1])
 
 
+def _extract_message(msg, uid, cfg):
+    """從郵件物件抽出信件欄位（收件匣 / 寄件備份共用）。"""
+    sender_addr = _addr_list(msg.get("From", ""))
+    sender_email = sender_addr[0][1] if sender_addr else ""
+    sender_name = sender_addr[0][0] if sender_addr else sender_email
+    return {
+        "message_uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+        "message_id": (msg.get("Message-ID") or "").strip(),
+        "thread_key": _thread_key(msg),
+        "received_at": _parse_date(msg.get("Date", "")),
+        "sender_email": sender_email,
+        "sender_name": sender_name or sender_email,
+        "to_emails": _make_body_text(_addr_list(msg.get("To", ""))),
+        "cc_emails": _make_body_text(_addr_list(msg.get("Cc", ""))),
+        "subject": _decode_header(msg.get("Subject", "")),
+        "body": _get_body(msg)[:20000],
+        "is_internal": _is_internal(sender_email, cfg),
+    }
+
+
+def _fetch_raw(M, uid):
+    """抓取指定 UID 的完整信件原始 bytes；失敗回傳 None。"""
+    try:
+        typ, mdata = M.fetch(uid, "(RFC822)")
+        if typ != "OK" or not mdata:
+            return None
+        for part in mdata:
+            if isinstance(part, tuple):
+                return part[1]
+    except Exception:
+        return None
+    return None
+
+
+def _scan_inbox(M, since_date, cfg, blocked_set):
+    """掃描收件匣最近信件，回傳 (messages, blocked_count)。"""
+    fetch_limit = max(1, int(cfg.get("fetch_limit") or 300))
+    messages = []
+    blocked_count = 0
+    try:
+        typ, data = M.search(None, f'(SINCE {since_date})')
+        if typ != "OK" or not data or not data[0]:
+            return messages, blocked_count
+        uids = data[0].split()[-fetch_limit:]
+        for uid in uids:
+            try:
+                # 1) 先抓標頭取得寄件人；被過濾的寄件人不抓內文
+                typ, hdata = M.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+                if typ != "OK" or not hdata:
+                    continue
+                hraw = None
+                for part in hdata:
+                    if isinstance(part, tuple):
+                        hraw = part[1]
+                        break
+                if hraw is None:
+                    continue
+                hsender = _addr_list(email.message_from_bytes(hraw).get("From", ""))
+                hsender_email = hsender[0][1] if hsender else ""
+                if hsender_email and hsender_email.lower() in blocked_set:
+                    blocked_count += 1
+                    continue
+                # 2) 抓完整內文
+                raw = _fetch_raw(M, uid)
+                if not raw:
+                    continue
+                messages.append(_extract_message(email.message_from_bytes(raw), uid, cfg))
+            except Exception:
+                continue
+    except Exception:
+        return messages, blocked_count
+    return messages, blocked_count
+
+
+def _list_sent_folder(M):
+    """從 IMAP 清單找出「寄件備份」資料夾名稱（英 / 繁中 Gmail 皆可），找不到回傳 None。"""
+    try:
+        typ, data = M.list()
+        if typ != "OK":
+            return None
+    except Exception:
+        return None
+    candidates = []
+    for item in data:
+        raw = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
+        lower = raw.lower()
+        if "\\sent" in lower or "[gmail]/sent mail" in lower or "寄件備份" in raw:
+            m = re.search(r'"([^"]*)"\s*$', raw)
+            name = m.group(1) if m else None
+            if name and name not in candidates:
+                candidates.append(name)
+    # 兜底：Gmail 英文 / 繁體中文慣用資料夾名
+    fallbacks = ["[Gmail]/Sent Mail", "[Gmail]/寄件備份"]
+    tried = []
+    for name in candidates + fallbacks:
+        if name in tried:
+            continue
+        tried.append(name)
+        try:
+            typ, _ = M.select(f'"{name}"', readonly=True)
+            if typ == "OK":
+                return name
+        except Exception:
+            continue
+    return None
+
+
+def _scan_sent_messages(M, since_date, cfg):
+    """掃描寄件備份資料夾，找出本人自己寄出的信件（在 Gmail 直接回覆也算）。"""
+    sent_folder = _list_sent_folder(M)
+    if not sent_folder:
+        return []
+    fetch_limit = max(1, int(cfg.get("fetch_limit") or 300))
+    own_addr = (cfg.get("email") or "").strip().lower()
+    out = []
+    try:
+        typ, data = M.search(None, f'(SINCE {since_date})')
+        if typ != "OK" or not data or not data[0]:
+            return out
+        for uid in data[0].split()[-fetch_limit:]:
+            try:
+                raw = _fetch_raw(M, uid)
+                if not raw:
+                    continue
+                msg = email.message_from_bytes(raw)
+                sender = _addr_list(msg.get("From", ""))
+                sender_email = (sender[0][1] if sender else "") or ""
+                if sender_email.lower() != own_addr:
+                    continue
+                out.append(_extract_message(msg, uid, cfg))
+            except Exception:
+                continue
+    except Exception:
+        return out
+    return out
+
+
 # ==========================================
 # 連線測試
 # ==========================================
@@ -206,84 +343,46 @@ def fetch_new(cfg: dict) -> dict:
         if typ != "OK":
             return {"ok": False, "new": 0, "updated": 0, "fetched": 0, "error": "無法開啟收件匣"}
 
-        typ, data = M.search(None, "ALL")
-        if typ != "OK" or not data or not data[0]:
-            return {"ok": True, "new": 0, "updated": 0, "fetched": 0, "blocked": 0, "error": None}
-        all_uids = data[0].split()
-        # IMAP 搜尋結果由舊到新，取最新 fetch_limit 封
-        fetch_limit = max(1, int(cfg.get("fetch_limit") or 300))
-        uids = all_uids[-fetch_limit:]
+        # 依 fetch_days 重掃最近 N 天（含同事/本人回覆的新郵件，才能刷新既有執行緒狀態）
+        fetch_days = max(1, int(cfg.get("fetch_days") or 30))
+        since_date = (datetime.now() - timedelta(days=fetch_days)).strftime("%d-%b-%Y")
 
-        messages = []  # 每個元素: dict
         blocked_set = {b["sender_email"].lower() for b in Repository.get_email_blocklist()}
-        blocked_count = 0
-        for uid in uids:
-            try:
-                # 1) 先抓標頭取得寄件人；被過濾的寄件人不抓內文
-                typ, hdata = M.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
-                if typ != "OK" or not hdata:
-                    continue
-                hraw = None
-                for part in hdata:
-                    if isinstance(part, tuple):
-                        hraw = part[1]
-                        break
-                if hraw is None:
-                    continue
-                hsender = _addr_list(email.message_from_bytes(hraw).get("From", ""))
-                hsender_email = hsender[0][1] if hsender else ""
-                if hsender_email and hsender_email.lower() in blocked_set:
-                    blocked_count += 1
-                    continue
+        inbox_messages, blocked_count = _scan_inbox(M, since_date, cfg, blocked_set)
 
-                # 2) 抓完整內文
-                typ, mdata = M.fetch(uid, "(RFC822)")
-                if typ != "OK" or not mdata:
-                    continue
-                raw = None
-                for part in mdata:
-                    if isinstance(part, tuple):
-                        raw = part[1]
-                        break
-                if not raw:
-                    continue
-                msg = email.message_from_bytes(raw)
-                sender_addr = _addr_list(msg.get("From", ""))
-                sender_email = sender_addr[0][1] if sender_addr else ""
-                sender_name = sender_addr[0][0] if sender_addr else sender_email
-                received = _parse_date(msg.get("Date", ""))
-                subject = _decode_header(msg.get("Subject", ""))
-                to_addrs = _addr_list(msg.get("To", ""))
-                cc_addrs = _addr_list(msg.get("Cc", ""))
-                messages.append({
-                    "message_uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-                    "message_id": (msg.get("Message-ID") or "").strip(),
-                    "thread_key": _thread_key(msg),
-                    "received_at": received,
-                    "sender_email": sender_email,
-                    "sender_name": sender_name or sender_email,
-                    "to_emails": _make_body_text(to_addrs),
-                    "cc_emails": _make_body_text(cc_addrs),
-                    "subject": subject,
-                    "body": _get_body(msg)[:20000],
-                    "is_internal": _is_internal(sender_email, cfg),
-                })
-            except Exception:
-                continue
+        # 掃描「寄件備份」：抓到在 Gmail 網頁或其它郵件軟體直接回覆的信件，
+        # 才能把對應執行緒的客戶來信更新為「已回覆」。
+        sent_messages = _scan_sent_messages(M, since_date, cfg)
 
-        # 2) 計算執行緒：有內部回覆的 thread 標記為「同事已回覆」
+        # 2) 計算執行緒：內部回覆（同事）→「同事已回覆」；本人帳號回覆 →「已回覆」+自動建立工作日誌
+        own_addr = (email_addr or "").lower()
         threads = {}
-        for m in messages:
-            threads.setdefault(m["thread_key"], {"internal": False})
+
+        def _note_thread(m, kind):
+            t = threads.setdefault(m["thread_key"], {"internal": False, "own": False, "received_at": ""})
+            if kind == "internal":
+                t["internal"] = True
+            elif kind == "own":
+                t["own"] = True
+                if m["received_at"] and m["received_at"] > t["received_at"]:
+                    t["received_at"] = m["received_at"]
+
+        for m in inbox_messages:
             if m["is_internal"]:
-                threads[m["thread_key"]]["internal"] = True
+                _note_thread(m, "internal")
+            elif (m["sender_email"] or "").lower() == own_addr:
+                _note_thread(m, "own")
+        for m in sent_messages:
+            _note_thread(m, "own")
+
         internal_threads = [k for k, v in threads.items() if v["internal"]]
+        own_threads = [k for k, v in threads.items() if v["own"]]
 
         # 3) 只存外部寄件者的信件
         existing_uids = Repository.get_existing_email_uids()
         new_count = 0
         updated_count = 0
-        for m in messages:
+        for m in inbox_messages:
             if m["is_internal"]:
                 continue
             is_new = m["message_uid"] not in existing_uids
@@ -305,8 +404,26 @@ def fetch_new(cfg: dict) -> dict:
                 updated_count += 1
 
         Repository.mark_thread_internal_reply(internal_threads)
+
+        # 本人帳號回覆的執行緒：標記「已回覆」（不自動建立工作日誌，需轉檔時由使用者手動操作）
+        own_replied = 0
+        if own_threads:
+            thread_rows = {}
+            for r in Repository.get_emails_by_thread_keys(own_threads):
+                thread_rows.setdefault(r["thread_key"], []).append(r)
+            for key in own_threads:
+                rows = thread_rows.get(key) or []
+                if not rows:
+                    continue
+                reply_at = threads[key]["received_at"] or None
+                pending = [r for r in rows if not r.get("replied")]
+                if pending:
+                    Repository.mark_thread_replied([key], replied_at=reply_at)
+                    own_replied += 1
+
         return {"ok": True, "new": new_count, "updated": updated_count,
-                "fetched": len(messages), "blocked": blocked_count, "error": None}
+                "fetched": len(inbox_messages) + len(sent_messages), "blocked": blocked_count,
+                "own_replied": own_replied, "error": None}
     finally:
         try:
             M.logout()

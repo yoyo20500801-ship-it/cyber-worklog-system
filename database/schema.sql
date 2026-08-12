@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS emails (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_message_uid ON emails(message_uid);
 CREATE INDEX IF NOT EXISTS idx_emails_received_at ON emails(received_at);
+CREATE INDEX IF NOT EXISTS idx_emails_thread_key ON emails(thread_key);
+CREATE INDEX IF NOT EXISTS idx_emails_replied ON emails(replied);
+CREATE INDEX IF NOT EXISTS idx_emails_worklog_id ON emails(worklog_id);
+
+-- 工作日誌查詢加速索引（依年月/狀態/關聯欄位）
+CREATE INDEX IF NOT EXISTS idx_worklogs_work_date ON worklogs(work_date);
+CREATE INDEX IF NOT EXISTS idx_worklogs_status ON worklogs(status);
+CREATE INDEX IF NOT EXISTS idx_worklogs_project_id ON worklogs(project_id);
+CREATE INDEX IF NOT EXISTS idx_worklogs_school_id ON worklogs(school_id);
+CREATE INDEX IF NOT EXISTS idx_worklogs_created_at ON worklogs(created_at);
 
 -- 6. 客戶來信過濾名單 (被過濾的寄件人：同步時不再抓取，可復原)
 CREATE TABLE IF NOT EXISTS email_blocklist (

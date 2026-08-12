@@ -22,6 +22,7 @@ from src.ui.views.theme_picker import ThemePickerDialog
 from src.ui import phone_input
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 from src.ui.components.pager import PaginationBar
+from src.ui.components.batch import batch_render
 
 
 def _safe_image_label(master, key, size):
@@ -162,48 +163,60 @@ class MainWindow(ctk.CTk):
         
 
     def _build_main_frame(self):
-        """建構右側主工作區"""
+        """建構右側主工作區（其餘視圖延遲到第一次切到時才建立，加速啟動）。"""
         self.main_frame = ctk.CTkFrame(self, fg_color=Theme.BG_DARK, corner_radius=0)
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         
         self.main_frame.grid_rowconfigure(0, weight=1)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
-        # 實例化所有視圖
-        self.view_overview = OverviewView(self.main_frame)
+        # 預設首頁（工作紀錄）立即建立；其餘視圖首次切到時才建立
         self.view_dashboard = WorklogView(self.main_frame)
-        self.view_mail = MailView(self.main_frame)
-        self.view_settings = SettingsView(
-            self.main_frame, 
-            on_data_changed_callback=self.view_dashboard.load_projects_from_db # 設定更動時，自動重載 Dashboard 下拉選單
-        )
-        self.view_transfer = TransferSystemView(self.main_frame)
-        self.view_dbs = DatabaseSearchView(self.main_frame)
+        self.view_dashboard.grid(row=0, column=0, sticky="nsew")
+        self.view_overview = None
+        self.view_mail = None
+        self.view_settings = None
+        self.view_transfer = None
+        self.view_dbs = None
 
-        for view in (self.view_overview, self.view_dashboard, self.view_mail, self.view_settings, self.view_transfer, self.view_dbs):
+    def _get_view(self, view_name):
+        """取得（必要時建立）指定視圖。"""
+        view = getattr(self, f"view_{view_name}")
+        if view is None:
+            if view_name == "settings":
+                view = SettingsView(
+                    self.main_frame,
+                    on_data_changed_callback=self.view_dashboard.load_projects_from_db,
+                )
+            else:
+                factory = {
+                    "overview": OverviewView,
+                    "mail": MailView,
+                    "transfer": TransferSystemView,
+                    "dbsearch": DatabaseSearchView,
+                }[view_name]
+                view = factory(self.main_frame)
+            setattr(self, f"view_{view_name}", view)
             view.grid(row=0, column=0, sticky="nsew")
+        return view
 
     def show_view(self, view_name):
         """頁面切換控制機制"""
         self.current_view_name = view_name
-        mapping = {
-            "overview": (self.view_overview, self.btn_overview),
-            "dashboard": (self.view_dashboard, self.btn_dashboard),
-            "mail": (self.view_mail, self.btn_mail),
-            "settings": (self.view_settings, self.btn_settings),
-            "transfer": (self.view_transfer, self.btn_transfer),
-            "dbsearch": (self.view_dbs, self.btn_dbs),
-        }
-        view, active_btn = mapping[view_name]
+        active_btn = {
+            "overview": self.btn_overview,
+            "dashboard": self.btn_dashboard,
+            "mail": self.btn_mail,
+            "settings": self.btn_settings,
+            "transfer": self.btn_transfer,
+            "dbsearch": self.btn_dbs,
+        }[view_name]
+        view = self._get_view(view_name)
         if view_name == "settings":
-            self.view_settings.refresh_mail_blocklist()
-        reset_view = {
-            "overview": self.view_overview,
-            "dashboard": self.view_dashboard,
-            "transfer": self.view_transfer,
-        }.get(view_name)
-        if reset_view is not None and hasattr(reset_view, "reset_to_now"):
-            reset_view.reset_to_now()
+            view.refresh_mail_blocklist()
+        # 這三頁會重設為當月；資料沒變動時略過重建，避免切頁卡頓
+        if view_name in ("overview", "dashboard", "transfer") and hasattr(view, "reset_to_now"):
+            view.reset_to_now()
         view.tkraise()  # 將指定頁面置頂
         for btn in (self.btn_overview, self.btn_dashboard, self.btn_mail, self.btn_settings, self.btn_transfer, self.btn_dbs):
             if btn is active_btn:
@@ -255,9 +268,13 @@ class MainWindow(ctk.CTk):
 
         def work():
             mail_service.fetch_new(cfg)
-            self.after(0, self.view_mail.refresh_list)
+            self.after(0, self._refresh_mail_view)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _refresh_mail_view(self):
+        view = self._get_view("mail")
+        view.refresh_list()
 
     def _handle_update_result(self, result, startup=False):
         if result is None:
@@ -384,6 +401,10 @@ class WorklogView(ctk.CTkFrame):
         self.all_project_names = []
         self.all_school_names = []
         self.all_personnel_names = []
+
+        self._data_version = -1
+        self._render_seq = 0
+        self._refresh_after_id = None
 
         self._build_form()
         self._build_list()
@@ -810,7 +831,10 @@ class WorklogView(ctk.CTkFrame):
 
     def _on_year_month_change(self, _=None):
         self.date_var.set(self._default_date_for_selection())
-        self.refresh_list()
+        # 年月下拉連動時常連續觸發，合併成一次刷新避免重複重建
+        if self._refresh_after_id is not None:
+            self.after_cancel(self._refresh_after_id)
+        self._refresh_after_id = self.after(120, self.refresh_list)
 
     def _on_page_change(self):
         self.refresh_list()
@@ -822,13 +846,20 @@ class WorklogView(ctk.CTkFrame):
 
     def reset_to_now(self):
         now = datetime.now()
+        target = (str(now.year), str(now.month).zfill(2))
+        current = (self.filter_year_var.get(), self.filter_month_var.get())
         self._refresh_year_options()
-        self.filter_year_var.set(str(now.year))
-        self.filter_month_var.set(str(now.month).zfill(2))
+        self.filter_year_var.set(target[0])
+        self.filter_month_var.set(target[1])
         self.date_var.set(str(now.date()))
+        # 年月沒變且資料沒被改過 → 畫面已是現況，直接略過重建
+        if current == target and self._data_version == Repository.get_data_version():
+            return
         self.refresh_list()
 
     def refresh_list(self):
+        self._render_seq += 1
+        seq = self._render_seq
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
         self.selected_logs.clear()
@@ -843,19 +874,23 @@ class WorklogView(ctk.CTkFrame):
             self.pager.set_page(1)
             self._last_query_key = key
 
-        logs = Repository.get_worklogs_by_month(y, m, status)
-        self.pager.set_total(len(logs))
+        total = Repository.count_worklogs(y, m, status)
+        self.pager.set_total(total)
         self.update_action_buttons_state()
 
-        if not logs:
+        if not total:
             ctk.CTkLabel(self.scroll_frame, text=f"尚無 {y} 年 {m} 月 的工作日誌。", text_color=Theme.TEXT_MUTED).pack(pady=20)
+            self._data_version = Repository.get_data_version()
             return
 
-        for log in self.pager.get_slice(logs):
-            try:
-                self._build_log_card(log)
-            except Exception:
-                continue  # 單筆資料異常時跳過，避免整個列表或啟動崩潰
+        page_size = self.pager.get_page_size()
+        offset = (self.pager.get_page() - 1) * page_size
+        logs = Repository.get_worklogs_page(y, m, status, page_size, offset)
+        self._data_version = Repository.get_data_version()
+        batch_render(
+            self.scroll_frame, logs, self._build_log_card,
+            is_stale=lambda: self._render_seq != seq,
+        )
 
     def _build_log_card(self, log):
         self.current_logs_data[log['id']] = log

@@ -7,6 +7,7 @@ from src.db.repository import Repository
 from src.utils.date_helper import selectable_years
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 from src.ui.components.pager import PaginationBar
+from src.ui.components.batch import batch_render
 
 
 class TransferSystemView(ctk.CTkFrame):
@@ -21,6 +22,9 @@ class TransferSystemView(ctk.CTkFrame):
         self.year_var = ctk.StringVar(value=str(now.year))
         self.month_var = ctk.StringVar(value=str(now.month).zfill(2))
         self.current_logs = []
+
+        self._data_version = -1
+        self._render_seq = 0
 
         self._build_header()
         self._build_list()
@@ -71,15 +75,22 @@ class TransferSystemView(ctk.CTkFrame):
 
     def reset_to_now(self):
         now = datetime.now()
+        target = (str(now.year), str(now.month).zfill(2))
+        current = (self.year_var.get(), self.month_var.get())
         self.combo_year.configure(values=selectable_years(Repository.get_min_worklog_year()))
-        self.year_var.set(str(now.year))
-        self.month_var.set(str(now.month).zfill(2))
+        self.year_var.set(target[0])
+        self.month_var.set(target[1])
+        # 年月沒變且資料沒被改過 → 畫面已是現況，直接略過重建
+        if current == target and self._data_version == Repository.get_data_version():
+            return
         self.refresh_list()
 
     def _on_page_change(self):
         self.refresh_list()
 
     def refresh_list(self):
+        self._render_seq += 1
+        seq = self._render_seq
         for w in self.scroll.winfo_children():
             w.destroy()
         y = self.year_var.get()
@@ -88,13 +99,21 @@ class TransferSystemView(ctk.CTkFrame):
         if key != getattr(self, "_last_query_key", None):
             self.pager.set_page(1)
             self._last_query_key = key
-        self.current_logs = Repository.get_transfer_logs_by_month(y, m)
-        self.pager.set_total(len(self.current_logs))
-        if not self.current_logs:
+        total = Repository.count_transfer_logs(y, m)
+        self.pager.set_total(total)
+        if not total:
+            self.current_logs = []
             ctk.CTkLabel(self.scroll, text=f"沒有 {y} 年 {m} 月的轉交紀錄。", text_color=Theme.TEXT_MUTED).pack(pady=30)
+            self._data_version = Repository.get_data_version()
             return
-        for log in self.pager.get_slice(self.current_logs):
-            self._build_card(log)
+        page_size = self.pager.get_page_size()
+        offset = (self.pager.get_page() - 1) * page_size
+        self.current_logs = Repository.get_transfer_logs_page(y, m, page_size, offset)
+        self._data_version = Repository.get_data_version()
+        batch_render(
+            self.scroll, self.current_logs, self._build_card,
+            is_stale=lambda: self._render_seq != seq,
+        )
 
     def _build_card(self, log):
         card = ctk.CTkFrame(self.scroll, fg_color=Theme.BG_DARK, corner_radius=6)
@@ -173,11 +192,12 @@ class TransferSystemView(ctk.CTkFrame):
         _CopyDialog(self.winfo_toplevel(), self._build_message(log))
 
     def _copy_all(self):
-        if not self.current_logs:
+        logs = Repository.get_transfer_logs_by_month(self.year_var.get(), self.month_var.get())
+        if not logs:
             messagebox.showinfo("提示", "目前沒有可複製的轉交紀錄。")
             return
         separator = "\n\n" + "=" * 30 + "\n\n"
-        text = separator.join(self._build_message(lg) for lg in self.current_logs)
+        text = separator.join(self._build_message(lg) for lg in logs)
         _CopyDialog(self.winfo_toplevel(), text)
 
 

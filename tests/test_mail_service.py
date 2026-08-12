@@ -1,5 +1,6 @@
 # 檔案：tests/test_mail_service.py
 # 測試 mail_service 的純解析邏輯（不連網、不操作正式資料庫）
+import re
 import email
 import email.message
 
@@ -96,6 +97,101 @@ def test_thread_key_falls_back_to_in_reply_to():
 def test_thread_key_falls_back_to_own_id():
     raw = "Message-ID: <Z@z>\r\n\r\nbody"
     assert ms._thread_key(_msg_from_string(raw)) == "<Z@z>"
+
+
+# ---------- 寄件備份掃描（在 Gmail 直接回覆也能被偵測） ----------
+class _FakeListM:
+    """只實作 list / select 的假 IMAP，供 _list_sent_folder 測試。"""
+
+    def __init__(self, folders):
+        self.folders = folders
+        self.selected = None
+        names = set()
+        for f in folders:
+            raw = f.decode("utf-8", errors="replace") if isinstance(f, bytes) else str(f)
+            m = re.search(r'"([^"]*)"\s*$', raw)
+            if m:
+                names.add(m.group(1))
+        self.names = names
+
+    def list(self):
+        return "OK", self.folders
+
+    def select(self, name, readonly=False):
+        self.selected = name
+        return ("OK", []) if name.strip('"') in self.names else ("NO", [])
+
+
+def test_list_sent_folder_finds_english_name():
+    fake = _FakeListM([
+        b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"',
+        b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"',
+        b'(\\HasNoChildren) "/" "INBOX"',
+    ])
+    assert ms._list_sent_folder(fake) == "[Gmail]/Sent Mail"
+
+
+def test_list_sent_folder_finds_chinese_name():
+    fake = _FakeListM([
+        r'(\HasNoChildren \Sent) "/" "[Gmail]/寄件備份"'.encode("utf-8"),
+    ])
+    assert ms._list_sent_folder(fake) == "[Gmail]/寄件備份"
+
+
+def test_list_sent_folder_no_sent_returns_none():
+    fake = _FakeListM([b'(\\HasNoChildren) "/" "INBOX"'])
+    assert ms._list_sent_folder(fake) is None
+
+
+class _FakeSentM:
+    """假 IMAP：寄件備份資料夾內有 msgs 封原始信，UID 從 1 開始編號。"""
+
+    def __init__(self, msgs):
+        self.msgs = msgs
+
+    def list(self):
+        return "OK", [b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"']
+
+    def select(self, name, readonly=False):
+        return "OK", []
+
+    def search(self, charset, criteria):
+        uids = b" ".join(bytes(str(i + 1).encode()) for i in range(len(self.msgs)))
+        return "OK", [uids]
+
+    def fetch(self, uid, what):
+        idx = int(uid) - 1
+        return "OK", [(uid, self.msgs[idx].encode("utf-8"))]
+
+
+def test_scan_sent_messages_finds_own_reply_only():
+    own_reply = (
+        "From: me@oneplus.com.tw\r\n"
+        "Message-ID: <reply@x>\r\n"
+        "In-Reply-To: <orig@x>\r\n"
+        "Date: Mon, 01 Jan 2024 10:00:00 +0800\r\n"
+        "Subject: Re: hello\r\n"
+        "\r\n"
+        "回覆內容"
+    )
+    other_email = (
+        "From: colleague@oneplus.com.tw\r\n"
+        "Message-ID: <other@x>\r\n"
+        "Date: Mon, 01 Jan 2024 09:00:00 +0800\r\n"
+        "Subject: hello\r\n"
+        "\r\n"
+        "body"
+    )
+    fake = _FakeSentM([own_reply, other_email])
+    msgs = ms._scan_sent_messages(fake, "01-Jan-2024", {"email": "me@oneplus.com.tw"})
+    assert len(msgs) == 1
+    assert msgs[0]["sender_email"] == "me@oneplus.com.tw"
+    assert msgs[0]["thread_key"] == "orig@x"
+
+
+def test_scan_sent_messages_empty_when_no_sent_folder():
+    fake = _FakeListM([b'(\\HasNoChildren) "/" "INBOX"'])
+    assert ms._scan_sent_messages(fake, "01-Jan-2024", {"email": "me@oneplus.com.tw"}) == []
 
 
 # ---------- 內部寄件者判斷 ----------

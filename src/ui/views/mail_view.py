@@ -12,6 +12,7 @@ from src.core import mail_config, mail_service
 from src.db.repository import Repository
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
 from src.ui.components.pager import PaginationBar
+from src.ui.components.batch import batch_render
 
 
 class MailView(ctk.CTkFrame):
@@ -22,6 +23,7 @@ class MailView(ctk.CTkFrame):
         self.filter_var = ctk.StringVar(value="全部")
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
+        self._render_seq = 0
         self._build_header()
         self._build_list()
         self.refresh_list()
@@ -92,9 +94,12 @@ class MailView(ctk.CTkFrame):
         new = result.get("new", 0)
         updated = result.get("updated", 0)
         blocked = result.get("blocked", 0)
+        own_replied = result.get("own_replied", 0)
         msg = f"✅ 新增 {new} 封、更新 {updated} 封"
         if blocked:
             msg += f"（過濾跳過 {blocked} 封）"
+        if own_replied:
+            msg += f"；新確認 {own_replied} 封已回覆"
         self.status_label.configure(
             text=msg, text_color=Theme.NEON_GREEN
         )
@@ -137,6 +142,8 @@ class MailView(ctk.CTkFrame):
         self.refresh_list()
 
     def refresh_list(self):
+        self._render_seq += 1
+        seq = self._render_seq
         for w in self.scroll.winfo_children():
             w.destroy()
 
@@ -156,12 +163,11 @@ class MailView(ctk.CTkFrame):
             self.status_label.configure(text="", text_color=Theme.TEXT_MUTED)
             return
 
-        emails = Repository.get_emails(
-            search=(self.entry_search.get().strip() or None),
-            filter_mode=self.filter_var.get(),
-        )
-        self.pager.set_total(len(emails))
-        if not emails:
+        search = self.entry_search.get().strip() or None
+        mode = self.filter_var.get()
+        total = Repository.count_emails(search=search, filter_mode=mode)
+        self.pager.set_total(total)
+        if not total:
             ctk.CTkLabel(
                 self.scroll,
                 text="尚無客戶來信，按右上角「🔄 同步」抓取信件。",
@@ -170,9 +176,19 @@ class MailView(ctk.CTkFrame):
             self.status_label.configure(text="", text_color=Theme.TEXT_MUTED)
             return
 
-        for e in self.pager.get_slice(emails):
-            self._render_card(e)
-        self.status_label.configure(text=f"共 {len(emails)} 封", text_color=Theme.TEXT_MUTED)
+        page_size = self.pager.get_page_size()
+        offset = (self.pager.get_page() - 1) * page_size
+        emails = Repository.get_emails(
+            search=search,
+            filter_mode=mode,
+            limit=page_size,
+            offset=offset,
+        )
+        batch_render(
+            self.scroll, emails, self._render_card,
+            is_stale=lambda: self._render_seq != seq,
+        )
+        self.status_label.configure(text=f"共 {total} 封", text_color=Theme.TEXT_MUTED)
 
     def _render_card(self, e):
         card = ctk.CTkFrame(self.scroll, fg_color=Theme.BG_CARD, corner_radius=8)

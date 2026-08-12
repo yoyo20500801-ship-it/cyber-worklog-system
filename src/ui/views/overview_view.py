@@ -5,6 +5,8 @@ from src.ui.theme import Theme
 from src.db.repository import Repository
 from src.utils.date_helper import selectable_years
 from src.ui.components.auto_hide_scroll import AutoHideScrollableFrame
+from src.ui.components.pager import PaginationBar
+from src.ui.components.batch import batch_render
 
 STATUS_ORDER = ("已處理", "待處理", "轉交")
 STATUS_COLORS = {"已處理": Theme.NEON_GREEN, "待處理": Theme.STATUS_PENDING, "轉交": Theme.STATUS_TRANSFER}
@@ -24,6 +26,10 @@ class OverviewView(ctk.CTkFrame):
         self.year_var = ctk.StringVar(value=str(now.year))
         self.month_var = ctk.StringVar(value=str(now.month).zfill(2))
         self.current_filter = "全部"
+
+        self._data_version = -1
+        self._render_seq = 0
+        self._refresh_after_id = None
 
         self._build_header()
         self._build_stat_cards()
@@ -47,13 +53,13 @@ class OverviewView(ctk.CTkFrame):
 
         self.combo_year = ctk.CTkComboBox(
             header, values=years, variable=self.year_var, width=80,
-            command=lambda _: self.refresh_all()
+            command=lambda _: self._schedule_refresh()
         )
         self.combo_year.pack(side="left", padx=(20, 5))
 
         self.combo_month = ctk.CTkComboBox(
             header, values=months, variable=self.month_var, width=60,
-            command=lambda _: self.refresh_all()
+            command=lambda _: self._schedule_refresh()
         )
         self.combo_month.pack(side="left", padx=5)
 
@@ -62,6 +68,12 @@ class OverviewView(ctk.CTkFrame):
             text_color=Theme.TEXT_MAIN, command=self.refresh_all
         )
         self.btn_refresh.pack(side="right", padx=15)
+
+    def _schedule_refresh(self):
+        # 年月下拉連動時常連續觸發，合併成一次刷新
+        if self._refresh_after_id is not None:
+            self.after_cancel(self._refresh_after_id)
+        self._refresh_after_id = self.after(120, self.refresh_all)
 
     # ==========================================
     # 統計卡：總件數 / 已處理 / 待處理 / 轉交（可點擊）
@@ -132,6 +144,9 @@ class OverviewView(ctk.CTkFrame):
         self.records_scroll = AutoHideScrollableFrame(list_frame, fg_color="transparent")
         self.records_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
+        self.records_pager = PaginationBar(list_frame, page_size=30, on_change=self._refresh_records)
+        self.records_pager.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 12))
+
         self.stats_panel = AutoHideScrollableFrame(
             self.main_area, fg_color=Theme.BG_CARD, corner_radius=8, width=340
         )
@@ -143,43 +158,65 @@ class OverviewView(ctk.CTkFrame):
     # ==========================================
     def reset_to_now(self):
         now = datetime.now()
+        target = (str(now.year), str(now.month).zfill(2))
+        current = (self.year_var.get(), self.month_var.get())
         self.combo_year.configure(values=selectable_years(Repository.get_min_worklog_year()))
-        self.year_var.set(str(now.year))
-        self.month_var.set(str(now.month).zfill(2))
+        self.year_var.set(target[0])
+        self.month_var.set(target[1])
+        # 年月沒變且資料沒被改過 → 畫面已是現況，直接略過重建
+        if current == target and self._data_version == Repository.get_data_version():
+            return
         self.refresh_all()
 
     def refresh_all(self):
-        self.refresh_summary()
+        summary = Repository.get_status_summary(self.year_var.get(), self.month_var.get())
+        self.refresh_summary(summary)
         self._refresh_records()
-        self._refresh_extra_stats()
+        self._refresh_extra_stats(summary)
         self._highlight_cards()
 
-    def refresh_summary(self):
-        summary = Repository.get_status_summary(self.year_var.get(), self.month_var.get())
+    def refresh_summary(self, summary):
         mapping = {"全部": "總計", "已處理": "已處理", "待處理": "待處理", "轉交": "轉交"}
         for key, skey in mapping.items():
             label = self.stat_cards[key + "_value"]
             label.configure(text=str(summary[skey]))
 
     def _refresh_records(self):
+        self._render_seq += 1
+        seq = self._render_seq
         for w in self.records_scroll.winfo_children():
             w.destroy()
         y = self.year_var.get()
         m = self.month_var.get()
         status = None if self.current_filter == "全部" else self.current_filter
-        logs = Repository.get_worklogs_by_month(y, m, status)
+
+        # 篩選條件改變時跳回第一頁
+        key = (y, m, status)
+        if key != getattr(self, "_last_records_key", None):
+            self.records_pager.set_page(1)
+            self._last_records_key = key
+
+        total = Repository.count_worklogs(y, m, status)
+        self.records_pager.set_total(total)
 
         filter_text = "所有狀態" if status is None else f"狀態：{status}"
-        self.records_title.configure(text=f"紀錄清單 ({filter_text}) · {len(logs)} 筆")
+        self.records_title.configure(text=f"紀錄清單 ({filter_text}) · {total} 筆")
 
-        if not logs:
+        if not total:
             ctk.CTkLabel(
                 self.records_scroll, text=f"{y} 年 {m} 月 沒有符合條件的紀錄。",
                 text_color=Theme.TEXT_MUTED
             ).pack(pady=30)
+            self._data_version = Repository.get_data_version()
             return
-        for log in logs:
-            self._build_record_card(log)
+        page_size = self.records_pager.get_page_size()
+        offset = (self.records_pager.get_page() - 1) * page_size
+        logs = Repository.get_worklogs_page(y, m, status, page_size, offset)
+        self._data_version = Repository.get_data_version()
+        batch_render(
+            self.records_scroll, logs, self._build_record_card,
+            is_stale=lambda: self._render_seq != seq,
+        )
 
     def _build_record_card(self, log):
         card = ctk.CTkFrame(self.records_scroll, fg_color=Theme.BG_DARK, corner_radius=6)
@@ -226,7 +263,7 @@ class OverviewView(ctk.CTkFrame):
     # ==========================================
     # 右欄數據面板
     # ==========================================
-    def _refresh_extra_stats(self):
+    def _refresh_extra_stats(self, summary):
         for w in self.stats_panel.winfo_children():
             w.destroy()
         y = self.year_var.get()
@@ -234,7 +271,7 @@ class OverviewView(ctk.CTkFrame):
 
         self._build_project_stats(y, m)
         self._build_daily_stats(y, m)
-        self._build_month_compare(y, m)
+        self._build_month_compare(y, m, summary)
 
     def _section(self, title):
         frame = ctk.CTkFrame(self.stats_panel, fg_color="transparent")
@@ -294,7 +331,7 @@ class OverviewView(ctk.CTkFrame):
                 text_color=Theme.NEON_YELLOW if is_peak else Theme.TEXT_MUTED
             ).pack(side="left")
 
-    def _build_month_compare(self, y, m):
+    def _build_month_compare(self, y, m, cur):
         frame = self._section("⚖️ 本月 vs 上月比較")
         y_i, m_i = int(y), int(m)
         if m_i == 1:
@@ -302,7 +339,6 @@ class OverviewView(ctk.CTkFrame):
         else:
             prev_y, prev_m = str(y_i), str(m_i - 1).zfill(2)
 
-        cur = Repository.get_status_summary(y, m)
         prev = Repository.get_status_summary(prev_y, prev_m)
 
         for key in ("總計", "已處理", "待處理", "轉交"):

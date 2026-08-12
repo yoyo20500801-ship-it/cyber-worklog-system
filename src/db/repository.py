@@ -1,7 +1,16 @@
 # 檔案：src/db/repository.py
-from src.db.connection import DBConnection
+from datetime import datetime
+from src.db.connection import DBConnection, get_data_version
 
 class Repository:
+    # ===============================
+    # 資料版本號
+    # ===============================
+    @staticmethod
+    def get_data_version() -> int:
+        """回傳目前資料版本號；任何寫入成功後會 +1（供視圖判斷是否要重繪）。"""
+        return get_data_version()
+
     # ===============================
     # 專案 (Projects) 操作
     # ===============================
@@ -275,6 +284,48 @@ class Repository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
+    def count_worklogs(year: str, month: str, status: str = None) -> int:
+        """指定年月（可含狀態）的工作日誌總數。"""
+        like_pattern = f"{year}-{month.zfill(2)}-%"
+        params = [like_pattern]
+        status_clause = ""
+        if status:
+            status_clause = " AND w.status = ?"
+            params.append(status)
+        with DBConnection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM worklogs w "
+                "WHERE w.work_date LIKE ?{status_clause}".format(status_clause=status_clause),
+                params,
+            ).fetchone()
+            return row["c"] if row else 0
+
+    @staticmethod
+    def get_worklogs_page(year: str, month: str, status: str = None,
+                          limit: int = 30, offset: int = 0) -> list:
+        """指定年月（可含狀態）的分頁工作日誌，只抓當頁資料。"""
+        like_pattern = f"{year}-{month.zfill(2)}-%"
+        params = [like_pattern]
+        status_clause = ""
+        if status:
+            status_clause = " AND w.status = ?"
+            params.append(status)
+        params += [int(limit), max(0, int(offset))]
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            query = """
+                SELECT w.*, p.name AS project_name, s.school_name
+                FROM worklogs w
+                LEFT JOIN projects p ON w.project_id = p.id
+                LEFT JOIN schools s ON w.school_id = s.id
+                WHERE w.work_date LIKE ?{status_clause}
+                ORDER BY w.work_date DESC, w.work_time DESC, w.created_at DESC
+                LIMIT ? OFFSET ?
+            """.format(status_clause=status_clause)
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
     def get_status_summary(year: str, month: str) -> dict:
         """取得指定年月的狀態統計：{總計, 已處理, 待處理, 轉交}"""
         like_pattern = f"{year}-{month.zfill(2)}-%"
@@ -349,6 +400,36 @@ class Repository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
+    def count_transfer_logs(year: str, month: str) -> int:
+        """指定年月的轉交紀錄總數。"""
+        like_pattern = f"{year}-{month.zfill(2)}-%"
+        with DBConnection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM worklogs w "
+                "WHERE w.status = '轉交' AND w.work_date LIKE ?",
+                (like_pattern,),
+            ).fetchone()
+            return row["c"] if row else 0
+
+    @staticmethod
+    def get_transfer_logs_page(year: str, month: str, limit: int = 30, offset: int = 0) -> list:
+        """指定年月的轉交紀錄分頁，只抓當頁資料。"""
+        like_pattern = f"{year}-{month.zfill(2)}-%"
+        with DBConnection() as conn:
+            cursor = conn.cursor()
+            query = """
+                SELECT w.*, p.name AS project_name, s.school_name
+                FROM worklogs w
+                LEFT JOIN projects p ON w.project_id = p.id
+                LEFT JOIN schools s ON w.school_id = s.id
+                WHERE w.status = '轉交' AND w.work_date LIKE ?
+                ORDER BY w.work_date DESC, w.work_time DESC, w.created_at DESC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, (like_pattern, int(limit), max(0, int(offset))))
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
     def set_worklog_transfer_target(log_id: int, transfer_to: str):
         """更新工作日誌的轉交對象"""
         with DBConnection() as conn:
@@ -397,6 +478,46 @@ class Repository:
             )
 
     @staticmethod
+    def mark_thread_replied(thread_keys: list, replied_at: str = None):
+        """將指定執行緒的客戶信件標記為「已回覆」（只更新尚未標記的）。"""
+        if not thread_keys:
+            return
+        ts = replied_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        placeholders = ",".join(["?"] * len(thread_keys))
+        with DBConnection() as conn:
+            conn.execute(
+                f"UPDATE emails SET replied = 1, replied_at = ? "
+                f"WHERE thread_key IN ({placeholders}) AND replied = 0",
+                [ts] + list(thread_keys),
+            )
+
+    @staticmethod
+    def get_emails_by_thread_keys(thread_keys: list) -> list:
+        """一次撈回所有指定執行緒的客戶信件（不限制已回覆與否）。"""
+        if not thread_keys:
+            return []
+        placeholders = ",".join(["?"] * len(thread_keys))
+        with DBConnection() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM emails WHERE thread_key IN ({placeholders}) "
+                "ORDER BY COALESCE(received_at, '') ASC, id ASC",
+                tuple(thread_keys),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def link_emails_to_worklog(email_ids: list, worklog_id: int):
+        """將多封信件綁定到同一筆工作日誌。"""
+        if not email_ids or not worklog_id:
+            return
+        placeholders = ",".join(["?"] * len(email_ids))
+        with DBConnection() as conn:
+            conn.execute(
+                f"UPDATE emails SET worklog_id = ? WHERE id IN ({placeholders})",
+                [worklog_id] + list(email_ids),
+            )
+
+    @staticmethod
     def mark_email_replied(email_id: int, replied_at: str):
         with DBConnection() as conn:
             conn.execute(
@@ -412,11 +533,8 @@ class Repository:
             )
 
     @staticmethod
-    def get_emails(search: str = None, filter_mode: str = "全部", limit: int = 500) -> list:
-        """取得客戶來信清單。
-
-        filter_mode：全部 / 待處理 / 已回覆 / 同事已回覆 / 已轉工作日誌
-        """
+    def _emails_where(search: str = None, filter_mode: str = "全部"):
+        """組合來信查詢的 WHERE 條件與參數（供 count_emails / get_emails 共用）。"""
         params = []
         where = ["1=1"]
         if search:
@@ -433,7 +551,27 @@ class Repository:
             where.append("is_internal_reply = 1")
         elif filter_mode == "已轉工作日誌":
             where.append("worklog_id IS NOT NULL")
-        where_sql = " AND ".join(where)
+        return " AND ".join(where), params
+
+    @staticmethod
+    def count_emails(search: str = None, filter_mode: str = "全部") -> int:
+        """取得客戶來信總數（配合分頁）。"""
+        where_sql, params = Repository._emails_where(search, filter_mode)
+        with DBConnection() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS c FROM emails e WHERE {where_sql}", params
+            ).fetchone()
+            return row["c"] if row else 0
+
+    @staticmethod
+    def get_emails(search: str = None, filter_mode: str = "全部",
+                   limit: int = 30, offset: int = 0) -> list:
+        """取得客戶來信清單（分頁）。
+
+        filter_mode：全部 / 待處理 / 已回覆 / 同事已回覆 / 已轉工作日誌
+        """
+        where_sql, params = Repository._emails_where(search, filter_mode)
+        params += [int(limit), max(0, int(offset))]
         with DBConnection() as conn:
             cursor = conn.cursor()
             query = f"""
@@ -442,9 +580,9 @@ class Repository:
                 LEFT JOIN worklogs w ON w.id = e.worklog_id
                 WHERE {where_sql}
                 ORDER BY e.received_at DESC, e.id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
             """
-            cursor.execute(query, params + [limit])
+            cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
