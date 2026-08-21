@@ -9,16 +9,20 @@ class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
         info = dict(self._scrollbar.grid_info())
         info.pop("in", None)
         self._scrollbar_grid = info
+        self._pending_autohide_id = None
         self._parent_canvas.bind("<Configure>", self._autohide_check, add=True)
         self.bind("<Configure>", self._autohide_check, add=True)
-        self.after(50, self._autohide_check)
+        self.after(50, self._apply_autohide)
 
     def _autohide_check(self, event=None):
         if not self.winfo_viewable():
             return
-        self.after_idle(self._apply_autohide)
+        if self._pending_autohide_id is not None:
+            return
+        self._pending_autohide_id = self.after(40, self._apply_autohide)
 
     def _apply_autohide(self):
+        self._pending_autohide_id = None
         try:
             sr = self._parent_canvas.cget("scrollregion")
             if not sr or " " not in sr:

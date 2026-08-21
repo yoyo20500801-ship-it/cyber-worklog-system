@@ -177,7 +177,7 @@ class MainWindow(ctk.CTk):
         self.view_mail = None
         self.view_settings = None
         self.view_transfer = None
-        self.view_dbs = None
+        self.view_dbsearch = None
 
     def _get_view(self, view_name):
         """取得（必要時建立）指定視圖。"""
@@ -211,7 +211,11 @@ class MainWindow(ctk.CTk):
             "transfer": self.btn_transfer,
             "dbsearch": self.btn_dbs,
         }[view_name]
-        view = self._get_view(view_name)
+        try:
+            view = self._get_view(view_name)
+        except Exception as e:
+            messagebox.showerror("頁面載入失敗", f"無法載入「{view_name}」頁面：\n{e}")
+            return
         if view_name == "settings":
             view.refresh_mail_blocklist()
         # 這三頁會重設為當月；資料沒變動時略過重建，避免切頁卡頓
@@ -956,12 +960,15 @@ class WorklogView(ctk.CTkFrame):
         else:
             top_row.pack_configure(pady=(10, 10)) # 如果二三排都沒有，增加底部留白
 
-        def make_clickable(widget, v=var):
-            widget.bind("<Button-1>", lambda e: [v.set(not v.get()), self.update_action_buttons_state()])
-            for child in widget.winfo_children():
-                if not isinstance(child, ctk.CTkCheckBox):
-                    make_clickable(child, v)
-        make_clickable(card)
+        def _on_card_click(e, v=var, c=card):
+            w = e.widget
+            while w and w != c:
+                if isinstance(w, ctk.CTkCheckBox):
+                    return
+                w = w.master
+            v.set(not v.get())
+            self.update_action_buttons_state()
+        card.bind("<Button-1>", _on_card_click)
 
     def open_browser_and_start(self):
         # 開啟目前選中專案設定的網址；未選專案或沒設網址時提示

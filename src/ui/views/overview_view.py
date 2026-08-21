@@ -268,10 +268,10 @@ class OverviewView(ctk.CTkFrame):
             w.destroy()
         y = self.year_var.get()
         m = self.month_var.get()
-
-        self._build_project_stats(y, m)
-        self._build_daily_stats(y, m)
-        self._build_month_compare(y, m, summary)
+        # 分批建立三個統計區塊，避免同步建立大量 widgets 造成卡頓
+        self.stats_panel.after(0, lambda: self._build_project_stats(y, m))
+        self.stats_panel.after(20, lambda: self._build_daily_stats(y, m))
+        self.stats_panel.after(40, lambda: self._build_month_compare(y, m, summary))
 
     def _section(self, title):
         frame = ctk.CTkFrame(self.stats_panel, fg_color="transparent")

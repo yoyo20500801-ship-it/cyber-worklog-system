@@ -3,7 +3,7 @@
 # 改成每批少量元件用 after() 續建，畫面保持流暢。
 
 
-def batch_render(parent, items, builder, batch=6, delay=8, is_stale=None):
+def batch_render(parent, items, builder, batch=15, delay=16, is_stale=None):
     """分批把 items 交給 builder 建立元件。
 
     參數：
